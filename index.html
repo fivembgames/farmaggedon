@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>🌾 Farming Simulator 2</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -360,6 +360,134 @@
       height: 100%; width: 100%; background: #ff5050;
       transition: width .15s; border-radius: 5px;
     }
+    /* ---- MOBILE: prevent tap-highlight & touch callouts ---- */
+    canvas { touch-action: none; }
+    button, .tool-btn, .crop-btn, .scene-btn, .shop-buy-btn, .shop-sell-btn, .shop-close-btn {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ---- MOBILE: inventory toggle button (hidden on desktop) ---- */
+    #inv-toggle {
+      display: none; position: fixed; right: 16px; top: 60px;
+      background: rgba(0,0,0,.6); color: #fff; border: none;
+      font-size: 1.2rem; width: 40px; height: 40px; border-radius: 50%;
+      cursor: pointer; z-index: 25; align-items: center; justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ---- RESPONSIVE: screens <= 768px ---- */
+    @media (max-width: 768px) {
+      /* HUD pills – shrink & reposition */
+      .hud-pill {
+        font-size: .82rem; padding: 5px 10px; border-radius: 14px;
+      }
+      #hud-left  { left: 8px; top: 10px; }
+      #hud-right { right: 8px; top: 10px; }
+
+      /* Camera focus button – tuck next to left pill */
+      #camera-focus-btn {
+        left: auto; right: 56px; top: 10px;
+        width: 36px; height: 36px; font-size: 1.1rem;
+      }
+
+      /* Scene tabs – smaller */
+      #scene-btns {
+        top: 10px; gap: 4px;
+      }
+      .scene-btn {
+        font-size: .72rem; padding: 5px 10px; border-radius: 14px;
+      }
+
+      /* Tooltip */
+      #tooltip {
+        top: 80px; font-size: .76rem; padding: 5px 12px;
+      }
+
+      /* Mine HUD */
+      #mine-hud { top: 46px; }
+      #mine-level-pill { font-size: .78rem; padding: 4px 12px; }
+      #mine-depth-bar-wrap { width: 120px; }
+
+      /* Grasshopper HUD */
+      #hopper-hud { top: 46px; font-size: .78rem; padding: 5px 12px; }
+
+      /* Weather banner */
+      #weather-banner { top: 80px; font-size: .82rem; padding: 7px 16px; }
+
+      /* Inventory – collapsible on mobile */
+      #inv-toggle { display: flex; }
+      #inventory {
+        right: 8px; top: 108px;
+        font-size: .76rem; padding: 8px 10px;
+        min-width: 140px; max-height: 50vh; overflow-y: auto;
+        display: none;
+      }
+      #inventory.mobile-open { display: block; }
+
+      /* Toolbar – shrink buttons */
+      #toolbar-wrap { bottom: 10px; }
+      #toolbar {
+        padding: 6px 10px; gap: 4px; border-radius: 30px;
+        max-width: 96vw; overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .tool-btn {
+        width: 42px; height: 42px; font-size: 1.35rem;
+        border-width: 2px;
+      }
+      .tool-label { font-size: .52rem; }
+      .crop-btn { width: 36px; height: 36px; font-size: 1.15rem; }
+      #crop-picker { padding: 4px 8px; gap: 4px; border-radius: 28px; }
+
+      /* Shop modals – full-width on small screens */
+      .shop-modal {
+        min-width: unset; max-width: 96vw; width: 96vw;
+        padding: 18px 14px; border-radius: 14px;
+        max-height: 85vh; overflow-y: auto;
+      }
+      .shop-title { font-size: 1.05rem; margin-bottom: 12px; }
+      .shop-buy-btn { padding: 8px 14px; font-size: .82rem; min-height: 40px; }
+      .shop-close-btn { font-size: 1.6rem; top: 8px; right: 10px;
+        width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; }
+
+      /* Pond hint */
+      #pond-hint { bottom: 80px; font-size: .75rem; }
+
+      /* Town labels */
+      .town-label { font-size: .65rem; }
+    }
+
+    /* ---- RESPONSIVE: very small screens (<= 480px) ---- */
+    @media (max-width: 480px) {
+      .hud-pill { font-size: .72rem; padding: 4px 8px; }
+
+      /* Hide scene-btn text, show emoji only */
+      .scene-btn { padding: 5px 8px; font-size: .85rem; }
+
+      #toolbar {
+        gap: 2px; padding: 5px 6px;
+      }
+      .tool-btn { width: 36px; height: 36px; font-size: 1.15rem; }
+      .tool-label { display: none; }
+      .crop-btn { width: 32px; height: 32px; font-size: 1rem; }
+
+      #inventory { max-height: 40vh; }
+    }
+
+    /* ---- LANDSCAPE on mobile ---- */
+    @media (max-height: 500px) and (orientation: landscape) {
+      #scene-btns { top: 6px; }
+      .scene-btn { font-size: .68rem; padding: 4px 8px; }
+      .hud-pill { top: 6px; font-size: .72rem; padding: 4px 8px; }
+      #camera-focus-btn { top: 6px; }
+      #toolbar-wrap { bottom: 6px; }
+      #toolbar { padding: 4px 8px; }
+      .tool-btn { width: 34px; height: 34px; font-size: 1.05rem; }
+      .tool-label { display: none; }
+      #inventory { top: 42px; max-height: 55vh; }
+      #inv-toggle { top: 42px; }
+      .shop-modal { max-height: 90vh; }
+    }
   </style>
 </head>
 <body>
@@ -370,7 +498,7 @@
 <div id="frost-overlay"></div>
 <div id="heavy-rain-overlay"></div>
 <div id="weather-banner"></div>
-<div id="pond-hint">💧 Click the pond to refill your watering can</div>
+<div id="pond-hint">💧 Tap the pond to refill your watering can</div>
 <div id="hopper-hud">
   🦗 ×<span id="hopper-count">1</span> &nbsp; Click to squash!
 </div>
@@ -531,6 +659,7 @@
 <div id="tooltip">Select a tool and click a tile</div>
 
 <!-- Inventory -->
+<button id="inv-toggle" onclick="document.getElementById('inventory').classList.toggle('mobile-open'); this.textContent = document.getElementById('inventory').classList.contains('mobile-open') ? '✕' : '🎒'">🎒</button>
 <div id="inventory">
   <h3>🎒 Inventory</h3>
   <div id="inv-rows"></div>
@@ -8813,6 +8942,101 @@ canvas.addEventListener('mousemove', e => {
 (function labelLoop() {
   requestAnimationFrame(labelLoop);
   if (currentView === 'town') updateTownLabels();
+})();
+
+// ================================================================
+//  MOBILE TOUCH SUPPORT
+// ================================================================
+(function initTouchSupport() {
+  const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+  // Convert a touch event into a fake mouse-like event object
+  function touchToMouse(te) {
+    const t = te.changedTouches[0] || te.touches[0];
+    return {
+      clientX: t.clientX,
+      clientY: t.clientY,
+      button: 0,
+      preventDefault: () => te.preventDefault(),
+      stopPropagation: () => te.stopPropagation()
+    };
+  }
+
+  // Tap detection: fire a synthetic click on short taps
+  let touchStartTime = 0;
+  let touchStartX = 0;
+  let touchStartY = 0;
+  const TAP_THRESHOLD_MS = 300;
+  const TAP_MOVE_PX = 15;
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();  // prevent scroll / zoom on canvas
+    const t = e.touches[0];
+    touchStartTime = performance.now();
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    // Update scarecrow ghost position on touch drag
+    if (placingScarecrow && scarecrowGhost) {
+      const fake = touchToMouse(e);
+      const pos = worldPosFromMouse(fake);
+      if (pos) {
+        scarecrowGhost.position.x = pos.x;
+        scarecrowGhost.position.z = pos.z;
+      }
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    const dt = performance.now() - touchStartTime;
+    const dx = Math.abs(t.clientX - touchStartX);
+    const dy = Math.abs(t.clientY - touchStartY);
+
+    // Only count as tap if short & didn't drag
+    if (dt < TAP_THRESHOLD_MS && dx < TAP_MOVE_PX && dy < TAP_MOVE_PX) {
+      const fake = touchToMouse(e);
+      // Dispatch a real click so all existing click handlers fire
+      const syntheticClick = new MouseEvent('click', {
+        bubbles: true,
+        clientX: fake.clientX,
+        clientY: fake.clientY,
+        button: 0
+      });
+      canvas.dispatchEvent(syntheticClick);
+    }
+  }, { passive: false });
+
+  // Long-press on mobile = cancel (like right-click / Escape)
+  let longPressTimer = null;
+  canvas.addEventListener('touchstart', e => {
+    longPressTimer = setTimeout(() => {
+      if (placingScarecrow) cancelScarecrowPlacement();
+      if (cameraFocusSelecting || cameraFocusActive) endCameraFocus();
+    }, 600);
+  });
+  canvas.addEventListener('touchend',  () => clearTimeout(longPressTimer));
+  canvas.addEventListener('touchmove', () => clearTimeout(longPressTimer));
+
+  // Prevent default on shop overlays to avoid scroll-through
+  document.querySelectorAll('.shop-overlay').forEach(ov => {
+    ov.addEventListener('touchmove', e => {
+      // Allow scroll inside modal but prevent on backdrop
+      if (e.target === ov) e.preventDefault();
+    }, { passive: false });
+  });
+
+  // Prevent double-tap zoom on buttons
+  document.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('touchend', e => {
+      e.preventDefault();
+      btn.click();
+    });
+  });
 })();
 
 </script>
