@@ -360,6 +360,35 @@
       height: 100%; width: 100%; background: #ff5050;
       transition: width .15s; border-radius: 5px;
     }
+    /* ---- STAMINA BAR ---- */
+    #stamina-wrap {
+      position: fixed; bottom: 90px; left: 16px;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      z-index: 25; pointer-events: none;
+    }
+    #stamina-label {
+      font-size: .62rem; color: #ccc; letter-spacing: .04em;
+      text-transform: uppercase; font-weight: 700;
+      text-shadow: 0 1px 3px rgba(0,0,0,.8);
+    }
+    #stamina-track {
+      width: 12px; height: 90px;
+      background: rgba(0,0,0,.55); border-radius: 6px;
+      border: 1px solid rgba(255,255,255,.18);
+      overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
+    }
+    #stamina-fill {
+      width: 100%; height: 100%; border-radius: 6px;
+      background: linear-gradient(to top, #22cc44, #88ee66);
+      transform-origin: bottom;
+      transition: height .25s ease, background .4s ease;
+    }
+
+    @media (max-width: 768px) {
+      #stamina-wrap { bottom: 76px; left: 8px; }
+      #stamina-track { width: 10px; height: 70px; }
+    }
+
     /* ---- MOBILE: prevent tap-highlight & touch callouts ---- */
     canvas { touch-action: none; }
     button, .tool-btn, .crop-btn, .scene-btn, .shop-buy-btn, .shop-sell-btn, .shop-close-btn {
@@ -702,6 +731,14 @@
       <button class="tool-btn" data-tool="fertilize">🌿</button>
       <span class="tool-label">Fertilize <span id="fertilizer-count">0</span></span>
     </div>
+  </div>
+</div>
+
+<!-- Stamina bar -->
+<div id="stamina-wrap">
+  <span id="stamina-label">⚡</span>
+  <div id="stamina-track">
+    <div id="stamina-fill"></div>
   </div>
 </div>
 
@@ -1155,6 +1192,68 @@ let waterCharges   = WATER_MAX_CHARGES;
 let currentTool    = TOOL.HOE;
 let selectedCrop   = 'wheat';
 let gold           = 600;
+
+// ================================================================
+//  STAMINA
+// ================================================================
+const STAMINA_MAX = 100;
+let stamina = STAMINA_MAX;
+let _staminaExhausted = false; // guard: only trigger exhaust once per zero-hit
+
+function updateStaminaUI() {
+  const fill  = document.getElementById('stamina-fill');
+  const label = document.getElementById('stamina-label');
+  if (!fill) return;
+  const pct = Math.max(0, stamina / STAMINA_MAX);
+  fill.style.height = (pct * 100) + '%';
+  // Colour: green → yellow → red
+  if (pct > 0.5) {
+    fill.style.background = 'linear-gradient(to top, #22cc44, #88ee66)';
+  } else if (pct > 0.25) {
+    fill.style.background = 'linear-gradient(to top, #ccaa00, #eedd44)';
+  } else {
+    fill.style.background = 'linear-gradient(to top, #cc2200, #ff6644)';
+  }
+  label.textContent = pct > 0.25 ? '⚡' : (pct > 0 ? '😓' : '😴');
+}
+
+function drainStamina(amount) {
+  if (_staminaExhausted) return;
+  stamina = Math.max(0, stamina - amount);
+  updateStaminaUI();
+  if (stamina <= 0 && !_staminaExhausted) {
+    _staminaExhausted = true;
+    onStaminaExhausted();
+  }
+}
+
+function onStaminaExhausted() {
+  showTip('😴 You are exhausted! Sleeping until morning…');
+
+  // Jump to start of next day
+  dayPhase = 0.16;   // dawn glow — just as sun is rising
+  dayCount++;
+  document.getElementById('day').textContent = dayCount;
+  tickObstacleGrowth();
+  tickWeatherDay();
+  checkRoboticsUnlock();
+
+  // Reset mine to floor 1
+  mineLevel = 1;
+  if (mineTileGrid.length > 0) {
+    generateMineLevel(mineLevel);
+    initMineBats();
+  }
+
+  // Restore stamina fully for the new day
+  stamina = STAMINA_MAX;
+  _staminaExhausted = false;
+  updateStaminaUI();
+
+  // Play sunrise jingle (needs audio context unlocked)
+  ensureAudio().then(() => sndSunrise());
+}
+
 let currentView    = 'farm'; // 'farm' | 'town'
 let upgradedCan    = false;
 let hasIncubator   = false;
@@ -1479,7 +1578,7 @@ function useTool(tile) {
 
     case TOOL.AXE:
       if (d.obstacle === OBS.TREE) {
-        hitObstacle(tile); sndChop();
+        hitObstacle(tile); sndChop(); drainStamina(5);
       } else if (d.obstacle === OBS.ROCK) {
         showTip('⚠️  Use the pickaxe ⛏ on rocks');
       } else if (d.obstacle === OBS.GRASS) {
@@ -1489,7 +1588,7 @@ function useTool(tile) {
 
     case TOOL.PICKAXE:
       if (d.obstacle === OBS.ROCK) {
-        hitObstacle(tile); sndMine();
+        hitObstacle(tile); sndMine(); drainStamina(4);
       } else if (d.obstacle === OBS.TREE) {
         showTip('⚠️  Use the axe 🪓 on trees');
       } else if (d.obstacle === OBS.GRASS) {
@@ -1499,7 +1598,7 @@ function useTool(tile) {
 
     case TOOL.SCYTHE:
       if (d.obstacle === OBS.GRASS) {
-        hitGrass(tile);
+        hitGrass(tile); drainStamina(1);
       } else if (d.state === ST.DECOMPOSED && d.cropKey === null && d.plant) {
         // Decomposed crop — scythe gives plant matter
         scene.remove(d.plant); d.plant = null;
@@ -1508,7 +1607,7 @@ function useTool(tile) {
         d.state = ST.TILLED; d.watered = false; d.waterCount = 0; d.readyDay = 0; d.decomposeDay = 0; d.tilledDay = dayCount;
         tile.material.color.setHex(SOIL_COL[ST.TILLED]);
         tile.material.emissive.setHex(0x000000);
-        sndGrassCut();
+        sndGrassCut(); drainStamina(1);
         showTip('🍂 +1 plant matter from decomposed crop!');
       } else if (d.state === ST.DECOMPOSED) {
         // Decomposed crop (fallback — cropKey already cleared)
@@ -1518,7 +1617,7 @@ function useTool(tile) {
         d.state = ST.TILLED; d.watered = false; d.waterCount = 0; d.readyDay = 0; d.decomposeDay = 0; d.tilledDay = dayCount;
         tile.material.color.setHex(SOIL_COL[ST.TILLED]);
         tile.material.emissive.setHex(0x000000);
-        sndGrassCut();
+        sndGrassCut(); drainStamina(1);
         showTip('🍂 +1 plant matter from decomposed crop!');
       } else if (d.obstacle) {
         showTip('⚠️  Scythe only cuts wild grass or decomposed crops');
@@ -1551,7 +1650,7 @@ function useTool(tile) {
         d.tilledDay = dayCount;
         tile.material.color.setHex(SOIL_COL[ST.TILLED]);
         showTip('✅ Soil tilled!');
-        sndHoe();
+        sndHoe(); drainStamina(3);
       } else { showTip('⚠️  Already tilled or occupied'); }
       break;
 
@@ -1570,7 +1669,7 @@ function useTool(tile) {
         tile.material.color.setHex(SOIL_COL[ST.SEEDED]);
         attachPlant(tile, ST.SEEDED);
         showTip(`🌱 ${CROPS[selectedCrop].emoji} ${CROPS[selectedCrop].name} planted!`);
-        sndPlant();
+        sndPlant(); drainStamina(1);
       } else if (d.state === ST.EMPTY) {
         showTip('⚠️  Till the soil first ⛏️');
       } else { showTip('⚠️  Already planted here'); }
@@ -1590,7 +1689,7 @@ function useTool(tile) {
         tile.material.color.setHex(0x201008);
         spawnDroplets(tile);
         showTip(`💧 Watered! (${waterCharges} charges left)`);
-        sndWater();
+        sndWater(); drainStamina(1);
         if (waterCharges === 0) showTip('🪣 Can empty! Go refill at the pond 💧');
       } else if (d.state === ST.READY) {
         showTip('🧺 Ready to harvest!');
@@ -1610,7 +1709,7 @@ function useTool(tile) {
         updateInventoryUI(d.cropKey);
         const fertMsg = d.fertilized ? ' (🌿 x2 yield!)' : '';
         showTip(`${crop.emoji} Harvested ${crop.name}${fertMsg}! Sell at the 🍽️ Restaurant in town.`);
-        sndHarvest();
+        sndHarvest(); drainStamina(1);
         d.state   = ST.TILLED;
         d.cropKey = null;
         d.watered = false;
@@ -2266,6 +2365,24 @@ function sndMoleSqueak() {
   s.triggerAttackRelease('C5', '16n');
   setTimeout(()=>{ s.triggerAttackRelease('A4', '16n'); }, 80);
   setTimeout(()=>s.dispose(), 600);
+}
+
+function sndSunrise() {
+  // Bright ascending arpeggio — C major pentatonic
+  const notes = ['C4','E4','G4','C5','E5'];
+  const vol = new Tone.Volume(-6).toDestination();
+  const rev = new Tone.Reverb({ decay: 2.5, wet: 0.4 }).connect(vol);
+  notes.forEach((note, i) => {
+    setTimeout(() => {
+      const s = new Tone.Synth({
+        oscillator:{ type:'triangle' },
+        envelope:{ attack:0.04, decay:0.3, sustain:0.3, release:0.6 }
+      }).connect(rev);
+      s.triggerAttackRelease(note, '8n');
+      setTimeout(() => s.dispose(), 1500);
+    }, i * 160);
+  });
+  setTimeout(() => { rev.dispose(); vol.dispose(); }, 3500);
 }
 
 function sndTreeFall() {
@@ -4259,6 +4376,7 @@ function collectEgg(pile) {
   eggPiles.splice(idx, 1);
   materials.egg++;
   updateMaterialsUI();
+  drainStamina(1);
   showTip('🥚 Collected an egg!');
 }
 
@@ -4305,6 +4423,7 @@ function collectPoop(pile) {
   poopPiles.splice(idx, 1);
   materials.poop++;
   updateMaterialsUI();
+  drainStamina(1);
   showTip('💩 Collected compost!');
 }
 
@@ -4774,7 +4893,7 @@ function cowEatWildGrass(cow) {
 function milkCow(cow) {
   if (!cow.needsMilking) return;
   cow.milkProgress++;
-  sndMilk();
+  sndMilk(); drainStamina(1);
   const remaining = cow.milkClicksNeeded - cow.milkProgress;
   if (cow.milkProgress >= cow.milkClicksNeeded) {
     // Done milking
@@ -7374,6 +7493,7 @@ function animate(now) {
   }
 }
 animate(0);
+updateStaminaUI();
 
 // ================================================================
 //  MINE SCENE
@@ -7610,6 +7730,9 @@ function makeMineTileMesh(level, x, z, isEmpty) {
   col.r = Math.max(0, Math.min(1, col.r + r));
   col.g = Math.max(0, Math.min(1, col.g + r * 0.8));
   col.b = Math.max(0, Math.min(1, col.b + r * 0.6));
+  // Small hue shift every 10 floors — cycles through warm/cool tints
+  const band = Math.floor((level - 1) / 10);
+  col.offsetHSL(band * 0.1, 0, 0);
   const mat = new THREE.MeshLambertMaterial({ color: col });
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(MINE_TILE_W, 0.12, MINE_TILE_W), mat);
   mesh.position.set(x + 0.5, 0.06, z + 0.5);
@@ -7911,7 +8034,7 @@ function hitMineRock(x, z) {
   const td = mineTileGrid[x][z];
   if (!td || !td.hasRock || td.hp <= 0) return;
 
-  sndMine();
+  sndMine(); drainStamina(5);
   // Flash rock red
   const rm = mineRockMeshes[x][z];
   if (rm) {
@@ -7963,7 +8086,7 @@ function digMineTile(x, z) {
   // Already-revealed tunnel — don't dig again
   if (td.isTunnel) return;
 
-  sndDig();
+  sndDig(); drainStamina(3);
   td.isDug = true;
   const tileMesh = mineTileMeshes[x][z];
   if (tileMesh) tileMesh.material.color.setHex(0x1a1008);
@@ -8319,8 +8442,46 @@ function payOffMole(mole) {
   gold -= 10;
   updateGoldUI();
   sndMoleSqueak();
-  showTip('🐾 Mole paid off and left! The hole stays.');
   mole.state = 'dismissed';
+
+  const r = Math.random();
+
+  // ~2% — teleport 20 floors down
+  if (r < 0.02) {
+    const floors = Math.min(20, MINE_MAX_LEVEL - mineLevel);
+    if (floors > 0) {
+      mineLevel += floors;
+      generateMineLevel(mineLevel);
+      showTip(`🐾 The mole grabbed you and dragged you ${floors} floors deeper! (Level ${mineLevel})`);
+    } else {
+      showTip('🐾 Mole paid off and left!');
+    }
+    return;
+  }
+
+  // ~8% — 100 gold "being a bud"
+  if (r < 0.10) {
+    gold += 100;
+    updateGoldUI();
+    showTip('🐾 "Thanks for being a bud!" The mole hands you 100 🪙!');
+    return;
+  }
+
+  // ~25% — random resource reward
+  if (r < 0.35) {
+    const rewards = [
+      () => { materials.rock++;   updateMaterialsUI(); return '🪨 +1 Rock'; },
+      () => { materials.copper++; updateMaterialsUI(); return '🟠 +1 Copper'; },
+      () => { materials.silver++; updateMaterialsUI(); return '⚪ +1 Silver'; },
+      () => { materials.gold++;   updateMaterialsUI(); return '🟡 +1 Gold Ore'; },
+      () => { materials.wood++;   updateMaterialsUI(); return '🪵 +1 Wood'; },
+    ];
+    const msg = rewards[Math.floor(Math.random() * rewards.length)]();
+    showTip(`🐾 The mole tosses you a gift as it leaves! ${msg}`);
+    return;
+  }
+
+  showTip('🐾 Mole paid off and left! The hole stays.');
 }
 
 function resetMineMoles() {
