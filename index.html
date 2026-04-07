@@ -2247,6 +2247,27 @@ function sndMine() {
   setTimeout(()=>s.dispose(), 800);
 }
 
+function sndDig() {
+  const s = new Tone.NoiseSynth({
+    noise:{ type:'brown' },
+    envelope:{ attack:0.005, decay:0.22, sustain:0.04, release:0.15 }
+  });
+  const f = new Tone.Filter({ frequency:320, type:'lowpass' });
+  s.chain(f, Tone.Destination);
+  s.triggerAttackRelease('8n');
+  setTimeout(()=>{ s.dispose(); f.dispose(); }, 700);
+}
+
+function sndMoleSqueak() {
+  const s = new Tone.Synth({
+    oscillator:{ type:'sine' },
+    envelope:{ attack:0.01, decay:0.15, sustain:0.05, release:0.1 }
+  }).toDestination();
+  s.triggerAttackRelease('C5', '16n');
+  setTimeout(()=>{ s.triggerAttackRelease('A4', '16n'); }, 80);
+  setTimeout(()=>s.dispose(), 600);
+}
+
 function sndTreeFall() {
   const s = new Tone.NoiseSynth({
     noise:{ type:'pink' },
@@ -7692,38 +7713,51 @@ function makeTunnelMesh() {
   return g;
 }
 
-// ---- Dug-empty plot marker ----
+// ---- Dug-empty plot marker — dark hole + rock debris ----
 function makeMineDirtMesh() {
   const g = new THREE.Group();
-  // Random hue offset for variety
-  const hueShift = (Math.random() - 0.5) * 0.06;
-  const dirtCol = new THREE.Color(0x7a6040);
-  const darkCol = new THREE.Color(0x5a4428);
-  dirtCol.offsetHSL(hueShift, 0, (Math.random() - 0.5) * 0.06);
-  darkCol.offsetHSL(hueShift, 0, (Math.random() - 0.5) * 0.04);
-  const dirtMat = new THREE.MeshLambertMaterial({ color: dirtCol });
-  const darkMat = new THREE.MeshLambertMaterial({ color: darkCol });
-  // Main mound
-  const mound = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.22, 6), dirtMat);
-  mound.position.y = 0.22;
-  g.add(mound);
-  // Smaller side mounds
-  const m2 = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.14, 5), darkMat);
-  m2.position.set(0.22, 0.18, 0.12);
-  g.add(m2);
-  const m3 = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.11, 5), dirtMat);
-  m3.position.set(-0.18, 0.17, -0.14);
-  g.add(m3);
-  // Scattered pebbles
-  for (let i = 0; i < 4; i++) {
-    const peb = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(0.03 + Math.random() * 0.03, 0),
-      darkMat
+
+  // Main dark circle (the hole)
+  const holeMat = new THREE.MeshLambertMaterial({ color: 0x100c08 });
+  const hole = new THREE.Mesh(new THREE.CircleGeometry(0.40, 14), holeMat);
+  hole.rotation.x = -Math.PI / 2;
+  hole.position.y = 0.085;
+  g.add(hole);
+
+  // Slightly lighter inner ring for depth
+  const innerMat = new THREE.MeshLambertMaterial({ color: 0x1e1610, transparent: true, opacity: 0.85 });
+  const inner = new THREE.Mesh(new THREE.CircleGeometry(0.26, 12), innerMat);
+  inner.rotation.x = -Math.PI / 2;
+  inner.position.y = 0.086;
+  g.add(inner);
+
+  // Rock debris scattered around the rim
+  const debrisCols = [0x5a4a38, 0x4a3a28, 0x6a5848, 0x3a2e1e, 0x7a6a56];
+  for (let i = 0; i < 8; i++) {
+    const col = debrisCols[i % debrisCols.length];
+    const sz = 0.028 + Math.random() * 0.042;
+    const debris = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(sz, 0),
+      new THREE.MeshLambertMaterial({ color: col })
     );
-    peb.position.set((Math.random() - 0.5) * 0.5, 0.14, (Math.random() - 0.5) * 0.5);
-    g.add(peb);
+    const angle = (i / 8) * Math.PI * 2 + (Math.random() - 0.5) * 0.7;
+    const dist  = 0.30 + Math.random() * 0.16;
+    debris.position.set(Math.cos(angle) * dist, 0.04 + Math.random() * 0.05, Math.sin(angle) * dist);
+    debris.rotation.set(Math.random() * 2.5, Math.random() * Math.PI, Math.random() * 2.5);
+    g.add(debris);
   }
-  // Random rotation so each mound looks unique
+
+  // A few smaller chips right at the edge of the hole
+  for (let i = 0; i < 5; i++) {
+    const chip = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.015 + Math.random() * 0.018, 0),
+      new THREE.MeshLambertMaterial({ color: 0x4a3a28 })
+    );
+    const angle = Math.random() * Math.PI * 2;
+    chip.position.set(Math.cos(angle) * (0.18 + Math.random() * 0.12), 0.09, Math.sin(angle) * (0.18 + Math.random() * 0.12));
+    g.add(chip);
+  }
+
   g.rotation.y = Math.random() * Math.PI * 2;
   return g;
 }
@@ -7735,6 +7769,8 @@ function generateMineLevel(level) {
   mineTileMeshes = [];
   mineRockMeshes = [];
   mineDirtMeshes = [];
+  resetMineMoles();
+  resetMineCentipedes();
 
   const density = mineRockDensity(level);
 
@@ -7789,6 +7825,7 @@ function generateMineLevel(level) {
         isDug: false,
         isTunnel,
         tunnelRevealed: false,
+        origColor: tile.material.color.getHex(),
       };
 
       if (hasRock) {
@@ -7874,6 +7911,7 @@ function hitMineRock(x, z) {
   const td = mineTileGrid[x][z];
   if (!td || !td.hasRock || td.hp <= 0) return;
 
+  sndMine();
   // Flash rock red
   const rm = mineRockMeshes[x][z];
   if (rm) {
@@ -7890,8 +7928,14 @@ function hitMineRock(x, z) {
     if (rm) { mineScene.userData.levelGroup.remove(rm); mineRockMeshes[x][z] = null; }
     td.hasRock = false;
     const drop = rollMineDrop(mineLevel);
-    if (drop) showTip(drop);
-    else showTip('🪨 Rock cleared');
+    if (Math.random() < 0.20) {
+      spawnMineCentipede(x + 0.5, z + 0.5);
+      showTip('🐛 A centipede crawled out of the rock!');
+    } else if (drop) {
+      showTip(drop);
+    } else {
+      showTip('🪨 Rock cleared');
+    }
   } else {
     // Rebuild with crack overlay
     if (rm) { mineScene.userData.levelGroup.remove(rm); }
@@ -7919,7 +7963,10 @@ function digMineTile(x, z) {
   // Already-revealed tunnel — don't dig again
   if (td.isTunnel) return;
 
+  sndDig();
   td.isDug = true;
+  const tileMesh = mineTileMeshes[x][z];
+  if (tileMesh) tileMesh.material.color.setHex(0x1a1008);
   const dm = makeMineDirtMesh();
   dm.position.set(x + 0.5, 0, z + 0.5);
   mineScene.userData.levelGroup.add(dm);
@@ -8008,7 +8055,10 @@ function switchToMine() {
   document.getElementById('btn-town').classList.remove('active-scene');
   document.getElementById('btn-mine').classList.add('active-scene');
   // Generate level if first visit
-  if (mineTileGrid.length === 0) generateMineLevel(mineLevel);
+  if (mineTileGrid.length === 0) {
+    generateMineLevel(mineLevel);
+    initMineBats();
+  }
   showTip('⛏️ Pickaxe: break rocks · Hoe: dig to find the hidden tunnel', false);
 }
 
@@ -8018,8 +8068,11 @@ function switchFromMine() {
 }
 
 // ---- Animate mine torches (flicker) ----
+let _mineLastTick = 0;
 function tickMine(now) {
   if (currentView !== 'mine') return;
+  const dt = _mineLastTick ? now - _mineLastTick : 16;
+  _mineLastTick = now;
   tickMineParticles();
   // Flicker torch lights
   mineTorchLights.forEach((pl, i) => {
@@ -8045,6 +8098,484 @@ function tickMine(now) {
       c.rotation.y = Math.sin(now * 0.001) * 0.15;
     }
   });
+  tickMineBats(now, dt);
+  tickMineMoles(dt, now);
+  tickMineCentipedes(dt, now);
+}
+
+// ================================================================
+//  CAVE BATS
+// ================================================================
+const mineBats = [];
+const BAT_COUNT = 4;
+
+// Perch spots along the cave walls (edge coordinates)
+const BAT_PERCH_SPOTS = [
+  { x:0.15, y:0.50, z:2.0 }, { x:0.15, y:0.45, z:5.5 }, { x:0.15, y:0.55, z:8.0 },
+  { x:9.85, y:0.50, z:1.5 }, { x:9.85, y:0.45, z:4.5 }, { x:9.85, y:0.55, z:7.5 },
+  { x:2.5,  y:0.48, z:0.15 }, { x:6.5,  y:0.52, z:0.15 },
+  { x:3.0,  y:0.48, z:9.85 }, { x:7.0,  y:0.52, z:9.85 },
+];
+
+function makeBatMesh() {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x1a1025 });
+  // Body
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.065, 6, 4), bodyMat);
+  body.scale.set(1, 0.75, 1.1);
+  g.add(body);
+  // Wings
+  const wingPts = [
+    new THREE.Vector3(0,0,0), new THREE.Vector3(0.30,0.06,0), new THREE.Vector3(0.24,-0.07,0)
+  ];
+  const wingShape = new THREE.Shape([
+    new THREE.Vector2(0,0), new THREE.Vector2(0.30,0.07),
+    new THREE.Vector2(0.24,-0.08), new THREE.Vector2(0,0)
+  ]);
+  const wingGeo = new THREE.ShapeGeometry(wingShape);
+  const wingMat = new THREE.MeshBasicMaterial({ color: 0x241530, side: THREE.DoubleSide, transparent: true, opacity: 0.88 });
+  const wR = new THREE.Mesh(wingGeo, wingMat);
+  wR.position.set(0.065, 0, 0);
+  g.add(wR);
+  const wL = new THREE.Mesh(wingGeo, wingMat.clone());
+  wL.scale.x = -1;
+  wL.position.set(-0.065, 0, 0);
+  g.add(wL);
+  // Red eyes
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff1111 });
+  const eyeGeo = new THREE.SphereGeometry(0.011, 4, 3);
+  [-0.022, 0.022].forEach(ex => {
+    const eye = new THREE.Mesh(eyeGeo, eyeMat);
+    eye.position.set(ex, 0.012, 0.055);
+    g.add(eye);
+  });
+  return g;
+}
+
+function initMineBats() {
+  mineBats.forEach(b => mineScene.remove(b.mesh));
+  mineBats.length = 0;
+  for (let i = 0; i < BAT_COUNT; i++) {
+    const spot = BAT_PERCH_SPOTS[i % BAT_PERCH_SPOTS.length];
+    const mesh = makeBatMesh();
+    mesh.position.set(spot.x, spot.y, spot.z);
+    mesh.rotation.x = Math.PI; // hanging upside-down
+    mineScene.add(mesh);
+    mineBats.push({
+      mesh, state: 'perching',
+      perchTimer: 4000 + i * 3500 + Math.random() * 8000,
+      from: null, to: null,
+      flyT: 0, flySpeed: 0.007 + Math.random() * 0.005,
+      wingPhase: Math.random() * Math.PI * 2,
+    });
+  }
+}
+
+function tickMineBats(now, dt) {
+  mineBats.forEach((bat, i) => {
+    if (bat.state === 'perching') {
+      bat.perchTimer -= dt;
+      // Tiny idle sway
+      bat.mesh.rotation.z = Math.sin(now * 0.0012 + i * 1.7) * 0.1;
+      if (bat.perchTimer <= 0) {
+        // Pick a far-away perch
+        const cur = bat.mesh.position;
+        let best = null, bestDist = 0;
+        BAT_PERCH_SPOTS.forEach(s => {
+          const d = Math.hypot(s.x - cur.x, s.z - cur.z);
+          if (d > bestDist) { bestDist = d; best = s; }
+        });
+        // Add slight random jitter to dest
+        bat.from = { x: cur.x, y: cur.y, z: cur.z };
+        bat.to   = { x: best.x + (Math.random()-0.5)*0.3, y: best.y, z: best.z + (Math.random()-0.5)*0.3 };
+        bat.flyT = 0;
+        bat.state = 'flying';
+      }
+    } else {
+      bat.flyT = Math.min(1, bat.flyT + bat.flySpeed);
+      // Smooth step
+      const t = bat.flyT * bat.flyT * (3 - 2 * bat.flyT);
+      const arc = Math.sin(bat.flyT * Math.PI) * 2.0;
+      bat.mesh.position.set(
+        bat.from.x + (bat.to.x - bat.from.x) * t,
+        bat.from.y + (bat.to.y - bat.from.y) * t + arc,
+        bat.from.z + (bat.to.z - bat.from.z) * t
+      );
+      // Face travel direction
+      const dx = bat.to.x - bat.from.x, dz = bat.to.z - bat.from.z;
+      bat.mesh.rotation.y = Math.atan2(dx, dz);
+      bat.mesh.rotation.x = 0;
+      bat.mesh.rotation.z = 0;
+      // Wing flap
+      bat.wingPhase += 0.22;
+      const flap = Math.sin(bat.wingPhase) * 0.55;
+      bat.mesh.children[1].rotation.z =  flap; // right wing
+      bat.mesh.children[2].rotation.z = -flap; // left wing
+      if (bat.flyT >= 1) {
+        bat.mesh.position.set(bat.to.x, bat.to.y, bat.to.z);
+        bat.mesh.rotation.x = Math.PI;
+        bat.state = 'perching';
+        bat.perchTimer = 8000 + Math.random() * 18000;
+      }
+    }
+  });
+}
+
+// ================================================================
+//  CAVE MOLES
+// ================================================================
+const mineMoles = [];
+
+function makeMoleMesh() {
+  const g = new THREE.Group();
+  const bodyMat  = new THREE.MeshLambertMaterial({ color: 0x5c3a1e });
+  const snoutMat = new THREE.MeshLambertMaterial({ color: 0xe08870 });
+  const clawMat  = new THREE.MeshLambertMaterial({ color: 0x8a6040 });
+  const tipMat   = new THREE.MeshLambertMaterial({ color: 0xd0b090 });
+
+  // Body
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), bodyMat);
+  body.scale.set(1, 0.85, 1.05);
+  g.add(body);
+  // Snout
+  const snout = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 5), snoutMat);
+  snout.scale.set(1, 0.85, 1.2);
+  snout.position.set(0, -0.01, 0.14);
+  g.add(snout);
+  // Eyes (tiny, nearly blind)
+  const eyeGeo = new THREE.SphereGeometry(0.018, 4, 3);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+  [-0.065, 0.065].forEach(ex => {
+    const eye = new THREE.Mesh(eyeGeo, eyeMat);
+    eye.position.set(ex, 0.065, 0.11);
+    g.add(eye);
+  });
+  // Front paws + claws
+  [-1, 1].forEach(side => {
+    const paw = new THREE.Mesh(new THREE.SphereGeometry(0.048, 5, 4), clawMat);
+    paw.position.set(side * 0.16, -0.06, 0.07);
+    g.add(paw);
+    for (let c = 0; c < 3; c++) {
+      const angle = (c - 1) * 0.32;
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.011, 0.058, 4), tipMat);
+      tip.rotation.x = Math.PI / 2;
+      tip.position.set(side * 0.16 + Math.sin(angle) * 0.025, -0.08, 0.13 + Math.cos(angle) * 0.02);
+      g.add(tip);
+    }
+  });
+  return g;
+}
+
+// Gold coin label above mole (CSS overlay positioned in 3D)
+const moleLabels = new Map(); // mole → DOM div
+
+function createMoleLabel(mole) {
+  const div = document.createElement('div');
+  div.style.cssText = 'position:fixed;background:rgba(0,0,0,.7);color:#FFD700;font-size:.75rem;font-weight:700;padding:3px 9px;border-radius:10px;pointer-events:none;white-space:nowrap;z-index:25;display:none;transform:translateX(-50%)';
+  div.textContent = '🪙 10 — Tap to pay off';
+  document.body.appendChild(div);
+  moleLabels.set(mole, div);
+}
+
+function removeMoleLabel(mole) {
+  const div = moleLabels.get(mole);
+  if (div) { div.remove(); moleLabels.delete(mole); }
+}
+
+function updateMoleLabels() {
+  if (currentView !== 'mine') return;
+  moleLabels.forEach((div, mole) => {
+    if (mole.state === 'idle') {
+      // Project mole world position to screen
+      const pos = mole.mesh.position.clone();
+      pos.y += 0.5;
+      pos.project(camera);
+      const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (1 - (pos.y * 0.5 + 0.5)) * window.innerHeight;
+      div.style.display = 'block';
+      div.style.left = x + 'px';
+      div.style.top  = y + 'px';
+    } else {
+      div.style.display = 'none';
+    }
+  });
+}
+
+function spawnMole(x, z) {
+  // Don't spawn on tunnel tile
+  const td = mineTileGrid[x] && mineTileGrid[x][z];
+  if (!td || td.isTunnel) return;
+  const mesh = makeMoleMesh();
+  mesh.position.set(x + 0.5, -0.25, z + 0.5);
+  mesh.rotation.y = Math.random() * Math.PI * 2;
+  mineScene.add(mesh);
+  const mole = { mesh, x, z, state: 'rising', riseT: 0, idleTimer: 0, sinkT: 0 };
+  createMoleLabel(mole);
+  mineMoles.push(mole);
+}
+
+function payOffMole(mole) {
+  if (gold < 10) { showTip('⚠️ Not enough gold! (Need 10 🪙)'); return; }
+  gold -= 10;
+  updateGoldUI();
+  sndMoleSqueak();
+  showTip('🐾 Mole paid off and left! The hole stays.');
+  mole.state = 'dismissed';
+}
+
+function resetMineMoles() {
+  mineMoles.forEach(m => { mineScene.remove(m.mesh); removeMoleLabel(m); });
+  mineMoles.length = 0;
+}
+
+let _moleSpawnAccum = 0;
+const MOLE_SPAWN_INTERVAL = 6000; // check every 6s
+
+function tickMineMoles(dt, now) {
+  // Periodic spawn attempt
+  _moleSpawnAccum += dt;
+  if (_moleSpawnAccum >= MOLE_SPAWN_INTERVAL) {
+    _moleSpawnAccum = 0;
+    // Collect all dug tiles with no mole
+    const eligible = [];
+    for (let x = 0; x < MINE_GRID; x++) {
+      for (let z = 0; z < MINE_GRID; z++) {
+        const td = mineTileGrid[x] && mineTileGrid[x][z];
+        if (td && td.isDug && !td.isTunnel) {
+          const hasMole = mineMoles.some(m => m.x === x && m.z === z && m.state !== 'dismissed');
+          if (!hasMole) eligible.push({ x, z });
+        }
+      }
+    }
+    // Spawn on 1 random eligible tile with 35% chance
+    if (eligible.length > 0 && Math.random() < 0.35) {
+      const pick = eligible[Math.floor(Math.random() * eligible.length)];
+      spawnMole(pick.x, pick.z);
+    }
+  }
+
+  for (let i = mineMoles.length - 1; i >= 0; i--) {
+    const mole = mineMoles[i];
+    if (mole.state === 'rising') {
+      mole.riseT = Math.min(1, mole.riseT + dt * 0.0009);
+      mole.mesh.position.y = -0.25 + mole.riseT * 0.38;
+      // Gentle emergence wobble
+      mole.mesh.rotation.y += 0.015;
+      if (mole.riseT >= 1) {
+        mole.state = 'idle';
+        mole.idleTimer = 12000 + Math.random() * 14000;
+        sndMoleSqueak();
+        showTip('🐾 A mole appeared! Click it to pay 10 🪙 or it will refill the hole.');
+      }
+    } else if (mole.state === 'idle') {
+      // Bob & look around
+      mole.mesh.position.y = 0.13 + Math.sin(now * 0.0028 + mole.x) * 0.025;
+      mole.mesh.rotation.y = Math.sin(now * 0.0008 + mole.z) * 1.2;
+      mole.idleTimer -= dt;
+      if (mole.idleTimer <= 0) {
+        mole.state = 'sinking'; // starts refilling
+        mole.sinkT = 0;
+      }
+    } else if (mole.state === 'sinking') {
+      mole.sinkT = Math.min(1, mole.sinkT + dt * 0.0007);
+      mole.mesh.position.y = 0.13 - mole.sinkT * 0.38;
+      if (mole.sinkT >= 1) {
+        // Refill the tile
+        const td = mineTileGrid[mole.x] && mineTileGrid[mole.x][mole.z];
+        if (td && td.isDug) {
+          td.isDug = false;
+          const tm = mineTileMeshes[mole.x] && mineTileMeshes[mole.x][mole.z];
+          if (tm && td.origColor !== undefined) tm.material.color.setHex(td.origColor);
+          const dm = mineDirtMeshes[mole.x][mole.z];
+          if (dm && mineScene.userData.levelGroup) {
+            mineScene.userData.levelGroup.remove(dm);
+            dm.traverse(c => { if (c.geometry) c.geometry.dispose(); });
+            mineDirtMeshes[mole.x][mole.z] = null;
+          }
+        }
+        mineScene.remove(mole.mesh);
+        removeMoleLabel(mole);
+        mineMoles.splice(i, 1);
+      }
+    } else if (mole.state === 'dismissed') {
+      mole.mesh.position.y -= dt * 0.0006;
+      if (mole.mesh.position.y < -0.3) {
+        mineScene.remove(mole.mesh);
+        removeMoleLabel(mole);
+        mineMoles.splice(i, 1);
+      }
+    }
+  }
+
+  updateMoleLabels();
+}
+
+// ================================================================
+//  CAVE CENTIPEDES
+// ================================================================
+const mineCentipedes = [];
+const CENTIPEDE_SEG_COUNT    = 9;    // 0 = head, 1-8 = body
+const CENTIPEDE_TRAIL_STEP   = 0.07; // push a trail point every 0.07 units moved
+const CENTIPEDE_TRAIL_PER_SEG = 4;   // trail indices between consecutive segments
+const CENTIPEDE_SPEED        = 1.4;  // units / second
+
+function makeCentipedeSegMesh(isHead) {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshLambertMaterial({ color: isHead ? 0x3a1005 : 0x5c2010 });
+  const sz = isHead ? 0.16 : 0.135;
+  const body = new THREE.Mesh(new THREE.SphereGeometry(sz, 8, 6), bodyMat);
+  body.scale.set(1.25, 0.55, 1.35);
+  g.add(body);
+
+  if (isHead) {
+    // Antennae — two long segmented stalks
+    const antMat = new THREE.MeshLambertMaterial({ color: 0x1a0800 });
+    [-0.08, 0.08].forEach(ox => {
+      // Base stalk
+      const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.006, 0.22, 4), antMat);
+      stalk.rotation.z = ox > 0 ? -0.55 : 0.55;
+      stalk.rotation.x = -0.3;
+      stalk.position.set(ox, 0.04, 0.14);
+      g.add(stalk);
+      // Tip stalk (angled further)
+      const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.002, 0.14, 4), antMat);
+      tip.rotation.z = ox > 0 ? -0.80 : 0.80;
+      tip.rotation.x = -0.5;
+      tip.position.set(ox * 1.6, 0.10, 0.24);
+      g.add(tip);
+    });
+    // Fangs — two curved downward-pointing claws
+    const fangMat = new THREE.MeshLambertMaterial({ color: 0xcc8830 });
+    [-0.06, 0.06].forEach(ox => {
+      const fang = new THREE.Mesh(new THREE.ConeGeometry(0.020, 0.11, 5), fangMat);
+      fang.rotation.x = 0.9;   // tip points forward-down
+      fang.rotation.z = ox > 0 ? -0.22 : 0.22;
+      fang.position.set(ox, -0.04, 0.155);
+      g.add(fang);
+    });
+    // Red eyes
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff2200 });
+    [-0.06, 0.06].forEach(ox => {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.024, 5, 4), eyeMat);
+      eye.position.set(ox, 0.04, 0.135);
+      g.add(eye);
+    });
+  } else {
+    // Leg stubs on each side
+    const legMat = new THREE.MeshLambertMaterial({ color: 0x200800 });
+    [-1, 1].forEach(side => {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.007, 0.20, 4), legMat);
+      leg.rotation.z = side * 1.3;
+      leg.position.set(side * 0.155, -0.028, 0);
+      g.add(leg);
+    });
+  }
+  return g;
+}
+
+function spawnMineCentipede(wx, wz) {
+  const scale = 1.0 + Math.random() * 0.5;    // 1.0 – 1.5
+  const yBase = 0.09 * scale;
+  const meshes = [];
+  const trailPerSeg = Math.max(1, Math.round(CENTIPEDE_TRAIL_PER_SEG * scale));
+  for (let i = 0; i < CENTIPEDE_SEG_COUNT; i++) {
+    const m = makeCentipedeSegMesh(i === 0);
+    m.scale.setScalar(scale);
+    m.position.set(wx, yBase, wz - i * (CENTIPEDE_TRAIL_STEP * trailPerSeg));
+    mineScene.add(m);
+    meshes.push(m);
+  }
+  // Pre-fill trail so body segments don't snap to origin
+  const maxTrail = CENTIPEDE_SEG_COUNT * trailPerSeg + 8;
+  const trail = [];
+  for (let i = 0; i < maxTrail; i++) {
+    trail.push({ x: wx, z: wz - i * CENTIPEDE_TRAIL_STEP });
+  }
+  mineCentipedes.push({
+    meshes, trail, scale, yBase, trailPerSeg,
+    headPos: { x: wx, z: wz },
+    headAngle: 0,
+    distAccum: 0,
+    wp: { x: 0.5 + Math.random() * 9, z: 0.5 + Math.random() * 9 },
+    eating: false, eatTimer: 0,
+  });
+}
+
+function resetMineCentipedes() {
+  mineCentipedes.forEach(c => c.meshes.forEach(m => mineScene.remove(m)));
+  mineCentipedes.length = 0;
+}
+
+function tickMineCentipedes(dt, now) {
+  const dtSec = dt / 1000;
+  for (let ci = mineCentipedes.length - 1; ci >= 0; ci--) {
+    const c = mineCentipedes[ci];
+
+    if (c.eating) {
+      c.eatTimer -= dt;
+      if (c.eatTimer <= 0) c.eating = false;
+      continue;
+    }
+
+    // Steer toward waypoint
+    const dx = c.wp.x - c.headPos.x;
+    const dz = c.wp.z - c.headPos.z;
+    if (Math.hypot(dx, dz) < 0.35) {
+      c.wp = { x: 0.5 + Math.random() * 9, z: 0.5 + Math.random() * 9 };
+    }
+    const targetAngle = Math.atan2(dx, dz);
+    let da = targetAngle - c.headAngle;
+    while (da >  Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    c.headAngle += da * Math.min(1, dtSec * 3.5);
+
+    // Move head, clamp to cave bounds
+    const step = CENTIPEDE_SPEED * dtSec;
+    c.headPos.x = Math.max(0.2, Math.min(9.8, c.headPos.x + Math.sin(c.headAngle) * step));
+    c.headPos.z = Math.max(0.2, Math.min(9.8, c.headPos.z + Math.cos(c.headAngle) * step));
+
+    // Accumulate distance and push trail points
+    c.distAccum += step;
+    if (c.distAccum >= CENTIPEDE_TRAIL_STEP) {
+      c.distAccum -= CENTIPEDE_TRAIL_STEP;
+      c.trail.unshift({ x: c.headPos.x, z: c.headPos.z });
+      const maxTrail = CENTIPEDE_SEG_COUNT * c.trailPerSeg + 8;
+      if (c.trail.length > maxTrail) c.trail.length = maxTrail;
+    }
+
+    // Position head segment
+    c.meshes[0].position.set(c.headPos.x, c.yBase, c.headPos.z);
+    c.meshes[0].rotation.y = -c.headAngle;
+
+    // Position body segments along trail
+    for (let i = 1; i < CENTIPEDE_SEG_COUNT; i++) {
+      const idx  = Math.min(i * c.trailPerSeg, c.trail.length - 1);
+      const pos  = c.trail[idx];
+      const bob  = Math.sin(now * 0.009 + i * 1.1) * 0.012 * c.scale;
+      c.meshes[i].position.set(pos.x, c.yBase + bob, pos.z);
+      // Orient segment toward the one ahead of it in the trail
+      const pidx = Math.max(0, idx - 1);
+      const prev = c.trail[pidx];
+      if (prev.x !== pos.x || prev.z !== pos.z) {
+        c.meshes[i].rotation.y = -Math.atan2(prev.x - pos.x, prev.z - pos.z);
+      }
+    }
+
+    // Check mole proximity — centipede eats any mole it touches
+    for (let mi = mineMoles.length - 1; mi >= 0; mi--) {
+      const mole = mineMoles[mi];
+      if (mole.state !== 'idle' && mole.state !== 'rising') continue;
+      if (Math.hypot(mole.mesh.position.x - c.headPos.x,
+                     mole.mesh.position.z - c.headPos.z) < 0.32 * c.scale) {
+        mole.state = 'dismissed';
+        showTip('🐛 The centipede ate the mole!');
+        c.eating  = true;
+        c.eatTimer = 500;
+        c.wp = { x: mole.mesh.position.x, z: mole.mesh.position.z };
+        break;
+      }
+    }
+  }
 }
 
 // ================================================================
@@ -8879,6 +9410,27 @@ const townRaycaster = new THREE.Raycaster();
 // ---- Mine click handler ----
 canvas.addEventListener('click', e => {
   if (currentView !== 'mine') return;
+
+  // Check mole clicks first
+  if (mineMoles.length > 0) {
+    const r = canvas.getBoundingClientRect();
+    mineRaycaster.setFromCamera(
+      new THREE.Vector2(
+        ((e.clientX - r.left) / r.width)  *  2 - 1,
+        ((e.clientY - r.top)  / r.height) * -2 + 1
+      ), camera
+    );
+    for (const mole of mineMoles) {
+      if (mole.state !== 'idle') continue;
+      const kids = [];
+      mole.mesh.traverse(c => { if (c.isMesh) kids.push(c); });
+      if (mineRaycaster.intersectObjects(kids).length > 0) {
+        payOffMole(mole);
+        return;
+      }
+    }
+  }
+
   const hit = getMineClickTarget(e);
   if (!hit) return;
   const { x, z, type } = hit;
