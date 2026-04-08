@@ -691,6 +691,18 @@
   </div>
 </div>
 
+<!-- Blacksmith Overlay -->
+<div class="shop-overlay" id="blacksmith-overlay">
+  <div class="shop-modal">
+    <button class="shop-close-btn" onclick="document.getElementById('blacksmith-overlay').style.display='none'">✕</button>
+    <div class="shop-title">🔨 Blacksmith</div>
+    <div class="shop-section">
+      <h4>Upgrade Tools</h4>
+      <div id="blacksmith-rows"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Church Overlay -->
 <div class="shop-overlay" id="church-overlay">
   <div class="shop-modal">
@@ -1323,6 +1335,46 @@ let _staminaExhausted = false; // guard: only trigger exhaust once per zero-hit
 let coffeesToday = 0;
 let coffeeOvercaffeinated = false;
 let _coffeeLastDay = 1;
+
+// ---- Tool upgrade system ----
+// Upgradeable tools: hoe, axe, pickaxe, scythe
+// toolLevels[tool] = 0..3  (0 = base)
+// toolUpgrading[tool] = { finishDay } or null
+const UPGRADEABLE_TOOLS = ['hoe', 'axe', 'pickaxe', 'scythe'];
+const TOOL_EMOJI = { hoe:'⛏️', axe:'🪓', pickaxe:'⛏', scythe:'🌾' };
+const TOOL_LABEL = { hoe:'Hoe', axe:'Axe', pickaxe:'Pickaxe', scythe:'Scythe' };
+// Upgrade costs: [coins, material_amount] at each level (1→2, 2→3, 3 is max)
+// Material: level 1 cost uses copper, level 2 silver, level 3 gold ore
+const UPGRADE_COIN_COST   = [60, 120, 200];
+const UPGRADE_MAT_COST    = [5, 3, 3];      // copper/silver/gold ore amounts
+const UPGRADE_MAT_KEY     = ['copper', 'silver', 'gold']; // materials key
+const UPGRADE_MAT_EMOJI   = ['🟠', '⚪', '🟡'];
+const toolLevels    = { hoe:0, axe:0, pickaxe:0, scythe:0 };
+const toolUpgrading = { hoe:null, axe:null, pickaxe:null, scythe:null };
+
+function toolDamageBonus(tool) {
+  // Each upgrade level grants +1 effective damage (reduces strikes needed)
+  return toolLevels[tool] || 0;
+}
+
+function updateToolChevrons() {
+  UPGRADEABLE_TOOLS.forEach(t => {
+    const btn = document.querySelector(`.tool-btn[data-tool="${t}"]`);
+    if (!btn) return;
+    const lvl = toolLevels[t];
+    // Remove existing chevron span
+    const old = btn.parentElement.querySelector('.tool-chevron');
+    if (old) old.remove();
+    if (lvl > 0) {
+      const chevron = document.createElement('span');
+      chevron.className = 'tool-chevron';
+      chevron.textContent = '›'.repeat(lvl).split('').join('');
+      chevron.style.cssText = 'position:absolute;top:-7px;right:-3px;font-size:.55rem;font-weight:900;color:#FFD700;line-height:1;letter-spacing:-1px;pointer-events:none;';
+      btn.parentElement.style.position = 'relative';
+      btn.parentElement.appendChild(chevron);
+    }
+  });
+}
 let _tiredWarningShown = false; // only show once per stamina fill
 
 function showTiredWarning() {
@@ -1377,6 +1429,8 @@ function onStaminaExhausted() {
   tickObstacleGrowth();
   tickWeatherDay();
   checkRoboticsUnlock();
+  checkBlacksmithUnlock();
+  checkUpgradeCompletion();
 
   // Reset mine to floor 1
   mineLevel = 1;
@@ -1727,6 +1781,7 @@ function useTool(tile) {
   switch (currentTool) {
 
     case TOOL.AXE:
+      if (toolUpgrading.axe) { showTip('🔨 Axe is being upgraded at the blacksmith!'); break; }
       if (d.obstacle === OBS.TREE) {
         hitObstacle(tile); sndChop(); drainStamina(3);
       } else if (d.obstacle === OBS.ROCK) {
@@ -1737,6 +1792,7 @@ function useTool(tile) {
       break;
 
     case TOOL.PICKAXE:
+      if (toolUpgrading.pickaxe) { showTip('🔨 Pickaxe is being upgraded at the blacksmith!'); break; }
       if (d.obstacle === OBS.ROCK) {
         hitObstacle(tile); sndMine(); drainStamina(2);
       } else if (d.obstacle === OBS.TREE) {
@@ -1747,6 +1803,7 @@ function useTool(tile) {
       break;
 
     case TOOL.SCYTHE:
+      if (toolUpgrading.scythe) { showTip('🔨 Scythe is being upgraded at the blacksmith!'); break; }
       if (d.obstacle === OBS.GRASS) {
         hitGrass(tile); drainStamina(1);
       } else if (d.state === ST.DECOMPOSED && d.cropKey === null && d.plant) {
@@ -1781,6 +1838,7 @@ function useTool(tile) {
       break;
 
     case TOOL.HOE:
+      if (toolUpgrading.hoe) { showTip('🔨 Hoe is being upgraded at the blacksmith!'); break; }
       if (d.obstacle === OBS.GRASS) { showTip('⚠️  Use the scythe 🌾 to harvest grass'); break; }
       if (d.obstacle) { showTip('⚠️  Clear the obstacle first!'); break; }
       // Blight check — also match by tile color as safety net
@@ -2000,6 +2058,8 @@ function tickDayNight(dt) {
     tickObstacleGrowth();
     tickWeatherDay();
     checkRoboticsUnlock();
+    checkBlacksmithUnlock();
+    checkUpgradeCompletion();
   }
 }
 
@@ -2843,7 +2903,7 @@ function placeObstacleMesh(tile) {
 
 function hitObstacle(tile) {
   const d = tile.userData;
-  d.obsHP--;
+  d.obsHP -= 1 + toolDamageBonus(currentTool);
   // flash hit
   if (d.obsMesh) {
     d.obsMesh.traverse(c => {
@@ -2895,14 +2955,21 @@ function tintMeshCopper(group) {
 // Grass-specific hit: remove top segment visually, give 1 hay or plant matter per cut
 function hitGrass(tile) {
   const d = tile.userData;
-  // Remove the top segment's blades from the mesh
+  const isDecomp = d.obsDecomposed;
+  // Scythe upgrade: each level lets you cut one more segment per swing
+  const scytheLvl = toolLevels['scythe'] || 0;
+  const segsToCut = Math.min(1 + scytheLvl, d.obsStage); // can't cut more than remaining
+
+  // Remove top N segments' blades from the mesh
   if (d.obsMesh) {
-    const topSeg = d.obsStage - 1; // segments are 0-indexed, obsStage = count
-    const toRemove = [];
-    d.obsMesh.traverse(c => {
-      if (c.isMesh && c.userData.seg === topSeg) toRemove.push(c);
-    });
-    toRemove.forEach(c => { d.obsMesh.remove(c); c.geometry.dispose(); });
+    for (let s = 0; s < segsToCut; s++) {
+      const topSeg = d.obsStage - 1 - s; // 0-indexed from bottom
+      const toRemove = [];
+      d.obsMesh.traverse(c => {
+        if (c.isMesh && c.userData.seg === topSeg) toRemove.push(c);
+      });
+      toRemove.forEach(c => { d.obsMesh.remove(c); c.geometry.dispose(); });
+    }
     // Flash remaining grass
     d.obsMesh.traverse(c => {
       if (c.isMesh && c.material.emissive) c.material.emissive.setHex(0x224411);
@@ -2913,21 +2980,20 @@ function hitGrass(tile) {
       });
     }, 120);
   }
-  d.obsStage--;
-  const isDecomp = d.obsDecomposed;
-  if (isDecomp) { materials.plantMatter++; } else { materials.hay++; }
+  d.obsStage -= segsToCut;
+  const yield_ = isDecomp ? segsToCut : segsToCut;
+  if (isDecomp) { materials.plantMatter += yield_; } else { materials.hay += yield_; }
   updateMaterialsUI();
   sndGrassCut();
   if (d.obsStage <= 0) {
-    // Fully cleared
     if (d.obsMesh) { scene.remove(d.obsMesh); d.obsMesh = null; }
     d.obstacle = null; d.obsStage = 0; d.obsHP = 0; d.obsGrowDay = 0; d.obsVariant = null;
     d.obsDecomposed = false; d.decomposeDay = 0;
-    showTip(isDecomp ? '🍂 Decomposed grass cleared! +1 plant matter' : '🌾 Grass cleared! +1 hay');
+    showTip(isDecomp ? `🍂 Decomposed grass cleared! +${yield_} plant matter` : `🌾 Grass cleared! +${yield_} hay`);
   } else {
     showTip(isDecomp
-      ? `🍂 +1 plant matter! ${d.obsStage} cut${d.obsStage>1?'s':''} left`
-      : `🌾 +1 hay! ${d.obsStage} cut${d.obsStage>1?'s':''} left`);
+      ? `🍂 +${yield_} plant matter! ${d.obsStage} cut${d.obsStage>1?'s':''} left`
+      : `🌾 +${yield_} hay! ${d.obsStage} cut${d.obsStage>1?'s':''} left`);
   }
 }
 
@@ -7701,6 +7767,7 @@ function animate(now) {
     tickMine(now);
     renderer.render(mineScene, camera);
   } else {
+    tickBlacksmithSmoke(now);
     renderer.render(townScene, camera);
   }
 
@@ -7710,6 +7777,7 @@ function animate(now) {
 }
 animate(0);
 updateStaminaUI();
+updateToolChevrons();
 
 // ================================================================
 //  MINE SCENE
@@ -8255,7 +8323,8 @@ function hitMineRock(x, z) {
   if (!td || !td.hasRock || td.hp <= 0) return;
 
   sndMine(); drainStamina(3);
-  // Flash rock red
+  td.hp -= 1 + toolDamageBonus('pickaxe'); td.hp = Math.max(td.hp, -1);
+  // Flash rock red (hp reduced below, skip the td.hp-- below)
   const rm = mineRockMeshes[x][z];
   if (rm) {
     rm.traverse(c => { if (c.isMesh && c.material.emissive) c.material.emissive.setHex(0x441111); });
@@ -8265,7 +8334,6 @@ function hitMineRock(x, z) {
   }
   spawnMineParticles(x + 0.5, z + 0.5);
 
-  td.hp--;
   if (td.hp <= 0) {
     // Remove rock mesh
     if (rm) { mineScene.userData.levelGroup.remove(rm); mineRockMeshes[x][z] = null; }
@@ -8423,7 +8491,7 @@ function switchToMine() {
   // Hide blightbugs
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
   // Hide town labels
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics].forEach(l => l.style.display = 'none');
+  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith].forEach(l => l.style.display = 'none');
   // Update scene buttons
   document.getElementById('btn-farm').classList.remove('active-scene');
   document.getElementById('btn-town').classList.remove('active-scene');
@@ -9021,6 +9089,8 @@ function doSleep() {
   tickObstacleGrowth();
   tickWeatherDay();
   checkRoboticsUnlock();
+  checkBlacksmithUnlock();
+  checkUpgradeCompletion();
   mineLevel = 1;
   closeRopeBubbles();
   if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
@@ -9383,6 +9453,122 @@ const animalMeshes = [];
   roboticsBuiltGrp = grp;
 })();
 
+// ---- Blacksmith — Under Construction ----
+let blacksmithConstrGrp = null;
+let blacksmithBuiltGrp  = null;
+const blacksmithMeshes  = [];
+let blacksmithUnlocked  = false;
+(function() {
+  const grp      = new THREE.Group();
+  const beamMat  = new THREE.MeshLambertMaterial({ color: 0x9B6930 });
+  const plankMat = new THREE.MeshLambertMaterial({ color: 0xC09050 });
+  const signMat  = new THREE.MeshLambertMaterial({ color: 0xFFCC00 });
+  [[-1.1,-1.0],[1.1,-1.0],[-1.1,1.0],[1.1,1.0]].forEach(([x,z]) => {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.14,3.2,0.14), beamMat);
+    p.position.set(x,1.6,z); grp.add(p);
+  });
+  const tb = new THREE.Mesh(new THREE.BoxGeometry(2.5,0.12,0.12), beamMat);
+  tb.position.set(0,3.0,-1.0); grp.add(tb);
+  const tb2 = tb.clone(); tb2.position.set(0,3.0,1.0); grp.add(tb2);
+  const tb3 = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.12,2.3), beamMat);
+  tb3.position.set(-1.1,3.0,0); grp.add(tb3);
+  const tb4 = tb3.clone(); tb4.position.set(1.1,3.0,0); grp.add(tb4);
+  [[0,0.7,0],[0.1,1.3,-0.1]].forEach(([px,py,pz]) => {
+    const pl = new THREE.Mesh(new THREE.BoxGeometry(2.0,0.08,0.4), plankMat);
+    pl.position.set(px,py,pz); grp.add(pl);
+  });
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(1.8,0.5,0.10), signMat);
+  sign.position.set(0,1.8,-1.1); grp.add(sign);
+  [-0.4,0.2].forEach(sx => {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.48,0.12), new THREE.MeshLambertMaterial({color:0x111111}));
+    s.position.set(sx,1.8,-1.1); grp.add(s);
+  });
+  grp.position.set(3.7,0,8);
+  townScene.add(grp);
+  blacksmithConstrGrp = grp;
+})();
+
+// ---- Blacksmith — Built ----
+let blacksmithChimneyTopPos = new THREE.Vector3(); // world pos of chimney top for smoke
+(function() {
+  const grp     = new THREE.Group();
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0x1A1A1A });
+  const wallDk  = new THREE.MeshLambertMaterial({ color: 0x0D0D0D });
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+  const chimMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+  const doorMat = new THREE.MeshLambertMaterial({ color: 0x080808 });
+  const fireMat = new THREE.MeshLambertMaterial({ color: 0xFF6600, transparent:true, opacity:0.85 });
+  const ironMat = new THREE.MeshLambertMaterial({ color: 0x555566 });
+
+  // Main body — half size of robotics
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.4,2.0,2.0), wallMat);
+  body.position.set(0,1.0,0); grp.add(body);
+
+  // Horizontal plank lines
+  [0.4,0.8,1.2].forEach(y => {
+    const ln = new THREE.Mesh(new THREE.BoxGeometry(2.42,0.04,0.005), wallDk);
+    ln.position.set(0,y,1.005); grp.add(ln);
+  });
+
+  // Rounded roof — use cylinder segments stacked to form barrel shape
+  for (let i=0;i<5;i++) {
+    const t  = i/4;
+    const hw = 1.4-t*0.6;
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(hw*2+0.05, 0.18, 2.15), roofMat);
+    seg.position.set(0, 2.09+i*0.18, 0); grp.add(seg);
+  }
+  // Top cap
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.55,0.22,8), roofMat);
+  cap.position.set(0,2.98,0); grp.add(cap);
+
+  // Prominent chimney — right side, tall
+  const chimBase = new THREE.Mesh(new THREE.BoxGeometry(0.42,1.8,0.42), chimMat);
+  chimBase.position.set(0.7,2.7,-0.3); grp.add(chimBase);
+  const chimTop  = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.22,0.52), chimMat);
+  chimTop.position.set(0.7,3.62,-0.3); grp.add(chimTop);
+  // Chimney rim detail
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(0.56,0.08,0.56), wallDk);
+  rim.position.set(0.7,3.54,-0.3); grp.add(rim);
+
+  // Door
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.48,0.88,0.12), doorMat);
+  door.position.set(-0.3,0.44,1.07); grp.add(door);
+  // Door arch
+  const arch = new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.24,0.12,8,1,false,0,Math.PI), doorMat);
+  arch.rotation.x=Math.PI/2; arch.rotation.z=Math.PI;
+  arch.position.set(-0.3,0.88,1.07); grp.add(arch);
+
+  // Window — small square with iron bars
+  const winPane = new THREE.Mesh(new THREE.BoxGeometry(0.38,0.32,0.10),
+    new THREE.MeshLambertMaterial({color:0xFF4400,transparent:true,opacity:0.5}));
+  winPane.position.set(0.55,0.9,1.06); grp.add(winPane);
+  // Iron bars on window
+  [-0.1,0.1].forEach(ox => {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.04,0.34,0.12), ironMat);
+    bar.position.set(0.55+ox,0.9,1.07); grp.add(bar);
+  });
+
+  // Forge glow — small fire visible through window
+  const glow = new THREE.Mesh(new THREE.BoxGeometry(0.28,0.18,0.05), fireMat);
+  glow.position.set(0.55,0.88,1.06); grp.add(glow);
+
+  // Anvil silhouette outside
+  const anvBase = new THREE.Mesh(new THREE.BoxGeometry(0.32,0.12,0.18), ironMat);
+  anvBase.position.set(-0.85,0.12,0.6); grp.add(anvBase);
+  const anvTop = new THREE.Mesh(new THREE.BoxGeometry(0.38,0.10,0.20), ironMat);
+  anvTop.position.set(-0.85,0.25,0.6); grp.add(anvTop);
+  const anvHorn = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.09,0.24,6), ironMat);
+  anvHorn.rotation.z=Math.PI/2; anvHorn.position.set(-0.65,0.26,0.6); grp.add(anvHorn);
+
+  grp.traverse(m => { if (m.isMesh) { m.userData.building='blacksmith'; blacksmithMeshes.push(m); } });
+  grp.position.set(3.7,0,8);
+  grp.visible = false;
+  townScene.add(grp);
+  blacksmithBuiltGrp = grp;
+  // Store chimney top world pos (relative to group: x=0.7, y=3.73, z=-0.3 + group.pos)
+  blacksmithChimneyTopPos.set(3.7+0.7, 3.73, 8-0.3);
+})();
+
 // ---- Town decorative trees ----
 [[-5,-7],[5,-7],[-5,7],[5,7],[-14,-3],[-14,3],[14,-3],[14,3],[0,-14]].forEach(([x,z]) => {
   const tr = new THREE.Mesh(
@@ -9409,13 +9595,15 @@ const lblSupply     = makeTownLabel('🌾 Supply Store', 'lbl-supply');
 const lblRestaurant = makeTownLabel('🍽️ Restaurant', 'lbl-restaurant');
 const lblChurch     = makeTownLabel('⛪ Church', 'lbl-church');
 const lblAnimal     = makeTownLabel('🐔 Animal Shop', 'lbl-animal');
-const lblRobotics   = makeTownLabel('🔧 Under Construction', 'lbl-robotics');
+const lblRobotics     = makeTownLabel('🔧 Under Construction', 'lbl-robotics');
+const lblBlacksmith   = makeTownLabel('🔨 Under Construction', 'lbl-blacksmith');
 const TOWN_WORLD_LABELS = [
   { el: lblSupply,     pos: new THREE.Vector3(-10, 5, 0) },
   { el: lblRestaurant, pos: new THREE.Vector3( 10, 5, 0) },
   { el: lblChurch,     pos: new THREE.Vector3(  0, 4.5,-10) },
   { el: lblAnimal,     pos: new THREE.Vector3(-10, 5, 8) },
   { el: lblRobotics,   pos: new THREE.Vector3(  0, 5, 8) },
+  { el: lblBlacksmith, pos: new THREE.Vector3(3.7, 4, 8) },
 ];
 
 function updateTownLabels() {
@@ -9467,7 +9655,7 @@ function switchToTown() {
   if (incubatorMesh) incubatorMesh.visible = false;
   if (chickenCoopMesh) chickenCoopMesh.visible = false;
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics].forEach(l => l.style.display = 'block');
+  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith].forEach(l => l.style.display = 'block');
   if (roboSweeper) roboSweeper.mesh.visible = false;
   if (eggcavator) eggcavator.mesh.visible = false;
   if (autoMower) autoMower.mesh.visible = false;
@@ -9507,7 +9695,7 @@ function switchToFarm() {
   if (chickenCoopMesh) chickenCoopMesh.visible = true;
   updateHopperHUD();
   blightBugs.forEach(b => { b.el.style.visibility = ''; });
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics].forEach(l => l.style.display = 'none');
+  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith].forEach(l => l.style.display = 'none');
   if (roboSweeper) roboSweeper.mesh.visible = true;
   if (eggcavator) eggcavator.mesh.visible = true;
   if (autoMower) autoMower.mesh.visible = true;
@@ -9518,6 +9706,7 @@ function switchToFarm() {
   document.getElementById('animal-overlay').style.display = 'none';
   document.getElementById('robotics-overlay').style.display = 'none';
   document.getElementById('church-overlay').style.display = 'none';
+  document.getElementById('blacksmith-overlay').style.display = 'none';
   document.getElementById('btn-town').classList.remove('active-scene');
   document.getElementById('btn-farm').classList.add('active-scene');
   showTip(HINT[currentTool], false);
@@ -9910,6 +10099,124 @@ function checkRoboticsUnlock() {
   showTip('🤖 The Robotics Shop is now open!');
 }
 
+// ================================================================
+//  BLACKSMITH
+// ================================================================
+// Smoke particles in townScene
+const blacksmithSmoke = [];
+
+function tickBlacksmithSmoke(now) {
+  const anyUpgrading = UPGRADEABLE_TOOLS.some(t => toolUpgrading[t] !== null);
+  // Spawn new smoke puff
+  if (anyUpgrading && Math.random() < 0.08) {
+    const puffMat = new THREE.MeshLambertMaterial({
+      color: 0xBBBBBB, transparent: true, opacity: 0.55
+    });
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.12 + Math.random()*0.10, 6, 5), puffMat);
+    puff.position.set(
+      blacksmithChimneyTopPos.x + (Math.random()-0.5)*0.18,
+      blacksmithChimneyTopPos.y,
+      blacksmithChimneyTopPos.z + (Math.random()-0.5)*0.18
+    );
+    puff.userData.vy    = 0.018 + Math.random()*0.012;
+    puff.userData.age   = 0;
+    puff.userData.life  = 60 + Math.floor(Math.random()*40);
+    townScene.add(puff);
+    blacksmithSmoke.push(puff);
+  }
+  // Tick existing puffs
+  for (let i = blacksmithSmoke.length - 1; i >= 0; i--) {
+    const p = blacksmithSmoke[i];
+    p.userData.age++;
+    p.position.y += p.userData.vy;
+    p.position.x += (Math.random()-0.5)*0.006;
+    p.scale.multiplyScalar(1.008);
+    p.material.opacity = Math.max(0, 0.55 * (1 - p.userData.age / p.userData.life));
+    if (p.userData.age >= p.userData.life) {
+      townScene.remove(p);
+      blacksmithSmoke.splice(i, 1);
+    }
+  }
+}
+
+function checkBlacksmithUnlock() {
+  if (blacksmithUnlocked) return;
+  if (dayCount < 3 || materials.copper < 10 || materials.silver < 5) return;
+  blacksmithUnlocked = true;
+  if (blacksmithConstrGrp) blacksmithConstrGrp.visible = false;
+  if (blacksmithBuiltGrp)  blacksmithBuiltGrp.visible  = true;
+  lblBlacksmith.textContent = '🔨 Blacksmith';
+  showTip('🔨 The Blacksmith is now open! Upgrade your tools!');
+}
+
+function checkUpgradeCompletion() {
+  UPGRADEABLE_TOOLS.forEach(t => {
+    const u = toolUpgrading[t];
+    if (!u) return;
+    if (dayCount >= u.finishDay) {
+      toolUpgrading[t] = null;
+      toolLevels[t]++;
+      updateToolChevrons();
+      showTip(`🔨 ${TOOL_LABEL[t]} upgraded to Level ${toolLevels[t]}! ›`.repeat(toolLevels[t]));
+    }
+  });
+}
+
+function openBlacksmith() {
+  if (!blacksmithUnlocked) { showTip('🔨 Still under construction…'); return; }
+  checkUpgradeCompletion();
+  const rows = document.getElementById('blacksmith-rows');
+  rows.innerHTML = '';
+  UPGRADEABLE_TOOLS.forEach(t => {
+    const lvl  = toolLevels[t];
+    const upgrading = toolUpgrading[t];
+    const row  = document.createElement('div');
+    row.className = 'shop-row';
+    row.style.flexDirection = 'column';
+    row.style.alignItems    = 'flex-start';
+    row.style.gap           = '4px';
+    const chevrons = lvl > 0 ? ' ' + '›'.repeat(lvl) : '';
+    if (upgrading) {
+      const daysLeft = Math.max(0, upgrading.finishDay - dayCount);
+      row.innerHTML = `<span>${TOOL_EMOJI[t]} ${TOOL_LABEL[t]}${chevrons} <small style="color:#aaa">Lvl ${lvl}</small></span>
+        <span style="color:#FFD700;font-size:.82rem">🔨 Upgrading… ${daysLeft} day${daysLeft!==1?'s':''} left</span>`;
+    } else if (lvl >= 3) {
+      row.innerHTML = `<span>${TOOL_EMOJI[t]} ${TOOL_LABEL[t]}${chevrons} <small style="color:#aaa">Lvl ${lvl}</small></span>
+        <span style="color:#88ff88;font-weight:700">✅ Max Level</span>`;
+    } else {
+      const coinCost = UPGRADE_COIN_COST[lvl];
+      const matKey   = UPGRADE_MAT_KEY[lvl];
+      const matAmt   = UPGRADE_MAT_COST[lvl];
+      const matEmoji = UPGRADE_MAT_EMOJI[lvl];
+      const have     = materials[matKey];
+      const canAfford = gold >= coinCost && have >= matAmt;
+      row.innerHTML = `<span>${TOOL_EMOJI[t]} ${TOOL_LABEL[t]}${chevrons} <small style="color:#aaa">Lvl ${lvl} → ${lvl+1}</small></span>
+        <small style="color:#aaa">Cost: ${coinCost}🪙 + ${matAmt}${matEmoji} (have: ${have})</small>
+        <button class="shop-buy-btn" ${canAfford?'':'disabled style="opacity:.45"'} onclick="startToolUpgrade('${t}')">Upgrade (1 day)</button>`;
+    }
+    rows.appendChild(row);
+  });
+  document.getElementById('blacksmith-overlay').style.display = 'flex';
+}
+
+function startToolUpgrade(t) {
+  const lvl = toolLevels[t];
+  if (lvl >= 3) { showTip('🔨 Already max level!'); return; }
+  if (toolUpgrading[t]) { showTip('🔨 Already upgrading!'); return; }
+  const coinCost = UPGRADE_COIN_COST[lvl];
+  const matKey   = UPGRADE_MAT_KEY[lvl];
+  const matAmt   = UPGRADE_MAT_COST[lvl];
+  if (gold < coinCost) { showTip(`⚠️ Need ${coinCost}🪙`); return; }
+  if (materials[matKey] < matAmt) { showTip(`⚠️ Need ${matAmt} ${UPGRADE_MAT_EMOJI[lvl]}`); return; }
+  gold -= coinCost;
+  materials[matKey] -= matAmt;
+  updateGoldUI();
+  updateMaterialsUI();
+  toolUpgrading[t] = { finishDay: dayCount + 1 };
+  showTip(`🔨 Upgrading ${TOOL_LABEL[t]}! Ready tomorrow.`);
+  openBlacksmith();
+}
+
 function openRoboticsShop() {
   if (!roboticsUnlocked) { showTip('🔧 Still under construction…'); return; }
   const row = document.getElementById('robosweeper-row');
@@ -10151,6 +10458,7 @@ canvas.addEventListener('click', e => {
     if (currentTool !== TOOL.PICKAXE) {
       showTip('⚠️ Use the ⛏️ Pickaxe to break rocks!'); return;
     }
+    if (toolUpgrading.pickaxe) { showTip('🔨 Pickaxe is being upgraded at the blacksmith!'); return; }
     hitMineRock(x, z);
     return;
   }
@@ -10172,7 +10480,8 @@ canvas.addEventListener('click', e => {
       document.getElementById('restaurant-overlay').style.display === 'flex' ||
       document.getElementById('animal-overlay').style.display === 'flex' ||
       document.getElementById('robotics-overlay').style.display === 'flex' ||
-      document.getElementById('church-overlay').style.display === 'flex') return;
+      document.getElementById('church-overlay').style.display === 'flex' ||
+      document.getElementById('blacksmith-overlay').style.display === 'flex') return;
   const rect = canvas.getBoundingClientRect();
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
@@ -10180,11 +10489,12 @@ canvas.addEventListener('click', e => {
   const hits = townRaycaster.intersectObjects(townScene.children, true);
   if (!hits.length) return;
   const bld = hits[0].object.userData.building;
-  if (bld === 'supply')     openSupplyStore();
-  if (bld === 'restaurant') openRestaurant();
-  if (bld === 'animal')     openAnimalShop();
-  if (bld === 'robotics')   openRoboticsShop();
-  if (bld === 'church')     openChurch();
+  if (bld === 'supply')      openSupplyStore();
+  if (bld === 'restaurant')  openRestaurant();
+  if (bld === 'animal')      openAnimalShop();
+  if (bld === 'robotics')    openRoboticsShop();
+  if (bld === 'church')      openChurch();
+  if (bld === 'blacksmith')  openBlacksmith();
 });
 
 // Town label hover feedback
@@ -10194,7 +10504,7 @@ canvas.addEventListener('mousemove', e => {
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
   townRaycaster.setFromCamera({ x: mx, y: my }, camera);
-  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...churchMeshes], false);
+  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...churchMeshes, ...blacksmithMeshes], false);
   canvas.style.cursor = hits.length ? 'pointer' : 'default';
 });
 
