@@ -814,6 +814,9 @@
 <div class="sleep-bubble" id="sleep-bubble-prompt">😴 Sleep?</div>
 <div class="sleep-bubble" id="sleep-bubble-yes">✅ Yes</div>
 <div class="sleep-bubble" id="sleep-bubble-no">❌ No</div>
+<div class="sleep-bubble" id="rope-bubble-prompt">🪢 Go back to entrance?</div>
+<div class="sleep-bubble" id="rope-bubble-yes" style="border-color:#22aa44;color:#22aa44">✅ Yes</div>
+<div class="sleep-bubble" id="rope-bubble-no"  style="border-color:#cc2200;color:#cc2200">❌ No</div>
 
 <!-- Tired warning overlay -->
 <div id="tired-warning">
@@ -1377,6 +1380,9 @@ function onStaminaExhausted() {
 
   // Reset mine to floor 1
   mineLevel = 1;
+  closeRopeBubbles();
+  if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
+  mineRopePos = null;
   if (mineTileGrid.length > 0) {
     generateMineLevel(mineLevel);
     initMineBats();
@@ -7660,6 +7666,7 @@ function animate(now) {
     if (Math.random() < 0.33) tickWeatherEmit();
     updateSleepBubbles();
   }
+  if (currentView === 'mine') updateRopeBubbles();
 
   const t = now * 0.001;
   for (let x=0; x<GRID; x++) for (let z=0; z<GRID; z++) {
@@ -7750,6 +7757,10 @@ let mineRockMeshes   = [];  // [x][z] rock mesh or null
 let mineTunnelPos    = { x: 0, z: 0 };
 let mineDirtMeshes   = [];  // [x][z] dug-hole marker or null
 let mineParticles    = [];  // debris pop particles
+// Rope (ascent marker)
+let mineRopeMesh     = null;  // rope mesh in mineScene
+let mineRopePos      = null;  // { x, z } world tile where last hole was
+let mineRopeState    = 'none'; // 'none' | 'prompt' | 'confirm'
 
 const mineScene = new THREE.Scene();
 mineScene.background = new THREE.Color(0x2a2018);
@@ -8315,12 +8326,41 @@ function digMineTile(x, z) {
 }
 
 // ---- Descend mine level ----
+function makeMineRopeMesh(wx, wz) {
+  const g = new THREE.Group();
+  const ropeMat  = new THREE.MeshLambertMaterial({ color: 0xF5F5DC }); // cream/white
+  const ringMat  = new THREE.MeshLambertMaterial({ color: 0xC8A86B }); // tan ring
+  // Vertical rope strand
+  const strand = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.65, 6), ropeMat);
+  strand.position.set(0, 0.40, 0); g.add(strand);
+  // Coil at bottom
+  for (let i = 0; i < 5; i++) {
+    const seg = new THREE.Mesh(new THREE.TorusGeometry(0.10 - i * 0.012, 0.018, 5, 8), ropeMat);
+    seg.rotation.x = Math.PI / 2;
+    seg.position.set(0, 0.06 + i * 0.038, 0); g.add(seg);
+  }
+  // Ring/hook at top
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.022, 6, 10), ringMat);
+  ring.position.set(0, 0.73, 0); g.add(ring);
+  g.position.set(wx + 0.5, 0.01, wz + 0.5);
+  return g;
+}
+
 function descendMine() {
   if (mineLevel >= MINE_MAX_LEVEL) {
     showTip('⛏️ You have reached the deepest level!'); return;
   }
+  // Record tunnel position for rope before generating new level
+  const prevTunnel = { x: mineTunnelPos.x, z: mineTunnelPos.z };
   mineLevel++;
   generateMineLevel(mineLevel);
+  // Place rope at where the hole was
+  if (mineRopeMesh) mineScene.remove(mineRopeMesh);
+  mineRopeMesh = makeMineRopeMesh(prevTunnel.x, prevTunnel.z);
+  mineScene.add(mineRopeMesh);
+  mineRopePos = { x: prevTunnel.x + 0.5, z: prevTunnel.z + 0.5 };
+  mineRopeState = 'none';
+  closeRopeBubbles();
   showTip(`⬇️ Descended to Level ${mineLevel}! Deeper, darker…`);
 }
 
@@ -8399,6 +8439,10 @@ function switchToMine() {
 function switchFromMine() {
   document.getElementById('mine-hud').style.display = 'none';
   document.getElementById('btn-mine').classList.remove('active-scene');
+  closeRopeBubbles();
+  if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
+  mineRopePos = null;
+  mineLevel = 1;
 }
 
 // ---- Animate mine torches (flicker) ----
@@ -8978,6 +9022,9 @@ function doSleep() {
   tickWeatherDay();
   checkRoboticsUnlock();
   mineLevel = 1;
+  closeRopeBubbles();
+  if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
+  mineRopePos = null;
   if (mineTileGrid.length > 0) { generateMineLevel(mineLevel); initMineBats(); }
   // Slept → full stamina, clear caffeine
   stamina = STAMINA_MAX;
@@ -9021,6 +9068,54 @@ function updateSleepBubbles() {
     no.style.top   = (sy + 28) + 'px';
   }
 }
+
+// ================================================================
+//  ROPE BUBBLE SYSTEM (mine ascent)
+// ================================================================
+function closeRopeBubbles() {
+  mineRopeState = 'none';
+  ['rope-bubble-prompt','rope-bubble-yes','rope-bubble-no']
+    .forEach(id => { document.getElementById(id).style.display = 'none'; });
+}
+
+function updateRopeBubbles() {
+  if (mineRopeState === 'none' || currentView !== 'mine' || !mineRopePos) return;
+  const worldPos = new THREE.Vector3(mineRopePos.x, 0.8, mineRopePos.z);
+  const proj = worldPos.clone().project(camera);
+  const sx = (proj.x *  0.5 + 0.5) * window.innerWidth;
+  const sy = (1 - (proj.y * 0.5 + 0.5)) * window.innerHeight;
+
+  const prompt = document.getElementById('rope-bubble-prompt');
+  prompt.style.left = sx + 'px';
+  prompt.style.top  = (sy - 18) + 'px';
+
+  if (mineRopeState === 'confirm') {
+    const yes = document.getElementById('rope-bubble-yes');
+    const no  = document.getElementById('rope-bubble-no');
+    yes.style.left = (sx - 44) + 'px';
+    yes.style.top  = (sy + 28) + 'px';
+    no.style.left  = (sx + 44) + 'px';
+    no.style.top   = (sy + 28) + 'px';
+  }
+}
+
+document.getElementById('rope-bubble-prompt').addEventListener('click', () => {
+  if (mineRopeState !== 'prompt') return;
+  mineRopeState = 'confirm';
+  document.getElementById('rope-bubble-yes').style.display = 'block';
+  document.getElementById('rope-bubble-no').style.display  = 'block';
+});
+document.getElementById('rope-bubble-yes').addEventListener('click', () => {
+  closeRopeBubbles();
+  // Remove rope mesh
+  if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
+  mineRopePos = null;
+  mineLevel = 1;
+  generateMineLevel(mineLevel);
+  initMineBats();
+  showTip('🪢 You climbed back to Level 1!');
+});
+document.getElementById('rope-bubble-no').addEventListener('click', closeRopeBubbles);
 
 // ================================================================
 //  TOWN SCENE
@@ -9431,6 +9526,7 @@ function switchToFarm() {
 function handleSceneBtn(target) {
   if (target === 'farm') {
     if (currentView === 'farm') { showTip('🌾 You are already on the farm!'); return; }
+    if (currentView === 'mine' && mineLevel > 1) { showTip('⛏️ You must return to Level 1 before leaving the mine!'); return; }
     if (currentView === 'mine') switchFromMine();
     switchToFarm();
   } else if (target === 'mine') {
@@ -9443,6 +9539,7 @@ function handleSceneBtn(target) {
     switchToMine();
   } else {
     if (currentView === 'town') { showTip('🏘️ You are already in town!'); return; }
+    if (currentView === 'mine' && mineLevel > 1) { showTip('⛏️ You must return to Level 1 before leaving the mine!'); return; }
     if (currentView === 'mine') switchFromMine();
     switchToTown();
   }
@@ -9997,6 +10094,28 @@ const townRaycaster = new THREE.Raycaster();
 // ---- Mine click handler ----
 canvas.addEventListener('click', e => {
   if (currentView !== 'mine') return;
+
+  // Rope click — open ascent prompt
+  if (mineRopeMesh && mineLevel > 1) {
+    const r = canvas.getBoundingClientRect();
+    mineRaycaster.setFromCamera(
+      new THREE.Vector2(
+        ((e.clientX - r.left) / r.width)  *  2 - 1,
+        ((e.clientY - r.top)  / r.height) * -2 + 1
+      ), camera
+    );
+    const ropeKids = [];
+    mineRopeMesh.traverse(c => { if (c.isMesh) ropeKids.push(c); });
+    if (mineRaycaster.intersectObjects(ropeKids).length > 0) {
+      if (mineRopeState === 'none') {
+        mineRopeState = 'prompt';
+        document.getElementById('rope-bubble-prompt').style.display = 'block';
+      }
+      return;
+    } else if (mineRopeState !== 'none') {
+      closeRopeBubbles();
+    }
+  }
 
   // Check mole clicks first
   if (mineMoles.length > 0) {
