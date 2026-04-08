@@ -681,8 +681,24 @@
     <button class="shop-close-btn" onclick="document.getElementById('restaurant-overlay').style.display='none'">✕</button>
     <div class="shop-title">🍽️ The Harvest Table</div>
     <div class="shop-section">
+      <h4>Menu</h4>
+      <div class="shop-row" id="coffee-row"></div>
+    </div>
+    <div class="shop-section">
       <h4>Sell Crops</h4>
       <div id="sell-rows"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Church Overlay -->
+<div class="shop-overlay" id="church-overlay">
+  <div class="shop-modal">
+    <button class="shop-close-btn" onclick="document.getElementById('church-overlay').style.display='none'">✕</button>
+    <div class="shop-title">⛪ Church</div>
+    <div class="shop-section">
+      <div class="shop-row" id="tithe-row"></div>
+      <div id="tithe-info" style="color:#aaa;text-align:center;padding:4px 0;font-size:.82rem"></div>
     </div>
   </div>
 </div>
@@ -1301,6 +1317,9 @@ let gold           = 600;
 const STAMINA_MAX = 100;
 let stamina = STAMINA_MAX;
 let _staminaExhausted = false; // guard: only trigger exhaust once per zero-hit
+let coffeesToday = 0;
+let coffeeOvercaffeinated = false;
+let _coffeeLastDay = 1;
 let _tiredWarningShown = false; // only show once per stamina fill
 
 function showTiredWarning() {
@@ -1363,9 +1382,14 @@ function onStaminaExhausted() {
     initMineBats();
   }
 
-  // Exhausted without sleeping → 75% stamina penalty
+  // Exhausted without sleeping — 50% if overcaffeinated, else 75%
   closeBarnSleep();
-  stamina = Math.floor(STAMINA_MAX * 0.75);
+  const exhaustPct = coffeeOvercaffeinated ? 0.50 : 0.75;
+  if (coffeeOvercaffeinated) showTip('😵 Caffeine crash! You start the day at 50% stamina.');
+  stamina = Math.floor(STAMINA_MAX * exhaustPct);
+  coffeeOvercaffeinated = false;
+  coffeesToday = 0;
+  _coffeeLastDay = dayCount;
   _staminaExhausted = false;
   _tiredWarningShown = false;
   updateStaminaUI();
@@ -4557,7 +4581,8 @@ function collectPoop(pile) {
 const MUSHROOM_GROW_MS      = 18000;  // ms between growth stage advances
 const MUSHROOM_SPAWN_MS     = 12000;  // ms between new cluster spawns
 const MUSHROOM_MAX_CLUSTERS = 14;     // max clusters on the ground at once
-const mushrooms = [];                 // { mesh, x, z, stage, timer, variant, clusterIdx }
+const MUSHROOM_BROWN_DAYS   = 2;      // days until mature mushroom turns brown (2-3 random)
+const mushrooms = [];                 // { mesh, x, z, stage, timer, variant, spawnDay }
 let lastMushroomSpawnMs = 0;
 
 // Perimeter spawn zone: outside the farm fence (fence is -0.4 to 8.4)
@@ -4574,17 +4599,18 @@ function randomPerimeterPos() {
 
 function makeMushroomMesh(stage, variant) {
   const g     = new THREE.Group();
+  const isBrown = stage === 3;
   const isBlue = variant === 'blue';
-  const capCol  = isBlue ? 0x6AB4DD : 0xC47A3A;
-  const dotCol  = isBlue ? 0xD0EEFF : 0xF5E6C8;
-  const stemCol = isBlue ? 0xD8EDF7 : 0xF0E0C0;
+  const capCol  = isBrown ? 0x6B4226 : isBlue ? 0x6AB4DD : 0xC47A3A;
+  const dotCol  = isBrown ? 0x8B6E4E : isBlue ? 0xD0EEFF : 0xF5E6C8;
+  const stemCol = isBrown ? 0x9A8668 : isBlue ? 0xD8EDF7 : 0xF0E0C0;
   const capMat  = new THREE.MeshLambertMaterial({ color: capCol });
   const dotMat  = new THREE.MeshLambertMaterial({ color: dotCol });
   const stemMat = new THREE.MeshLambertMaterial({ color: stemCol });
 
-  const scales = [0.45, 0.75, 1.0];
+  const scales = [0.45, 0.75, 1.0, 0.9];
   const sc = scales[stage];
-  const count = stage === 0 ? 1 : stage === 1 ? 2 : 3;
+  const count = stage <= 1 ? stage + 1 : 3;
 
   for (let i = 0; i < count; i++) {
     const angle = (i / count) * Math.PI * 2;
@@ -4626,7 +4652,7 @@ function spawnMushroomCluster() {
   const mesh = makeMushroomMesh(0, variant);
   mesh.position.set(x, 0.01, z);
   scene.add(mesh);
-  mushrooms.push({ mesh, x, z, stage: 0, timer: performance.now() + MUSHROOM_GROW_MS, variant });
+  mushrooms.push({ mesh, x, z, stage: 0, timer: performance.now() + MUSHROOM_GROW_MS, variant, spawnDay: dayCount });
 }
 
 function removeMushroomCluster(idx) {
@@ -4643,10 +4669,18 @@ function tickMushrooms(now) {
     if (m.stage < 2 && now > m.timer) {
       m.stage++;
       m.timer = now + MUSHROOM_GROW_MS;
-      // Replace mesh with new stage
       scene.remove(m.mesh);
       m.mesh.traverse(c => { if (c.isMesh) c.geometry.dispose(); });
       m.mesh = makeMushroomMesh(m.stage, m.variant);
+      m.mesh.position.set(m.x, 0.01, m.z);
+      scene.add(m.mesh);
+    }
+    // Mature mushrooms turn brown after 2-3 days
+    if (m.stage === 2 && dayCount - m.spawnDay >= (MUSHROOM_BROWN_DAYS + (m.variant === 'blue' ? 1 : 0))) {
+      m.stage = 3;
+      scene.remove(m.mesh);
+      m.mesh.traverse(c => { if (c.isMesh) c.geometry.dispose(); });
+      m.mesh = makeMushroomMesh(3, m.variant);
       m.mesh.position.set(m.x, 0.01, m.z);
       scene.add(m.mesh);
     }
@@ -7351,6 +7385,29 @@ canvas.addEventListener('click', async e => {
     }
   }
 
+  // Brown mushroom click — harvest tool collects plant matter
+  if (currentTool === TOOL.HARVEST && mushrooms.length > 0) {
+    const brownMushMeshes = [];
+    mushrooms.forEach((m, idx) => {
+      if (m.stage === 3) m.mesh.traverse(c => { if (c.isMesh) { c.userData._mushIdx = idx; brownMushMeshes.push(c); } });
+    });
+    if (brownMushMeshes.length > 0) {
+      const mhits = raycaster.intersectObjects(brownMushMeshes);
+      if (mhits.length > 0) {
+        const idx = mhits[0].object.userData._mushIdx;
+        if (idx !== undefined && mushrooms[idx] && mushrooms[idx].stage === 3) {
+          const yield_ = 2 + Math.floor(Math.random() * 2); // 2-3 plant matter
+          removeMushroomCluster(idx);
+          materials.plantMatter += yield_;
+          updateMaterialsUI();
+          drainStamina(1);
+          showTip(`🍂 Harvested brown mushrooms! +${yield_} plant matter`);
+          return;
+        }
+      }
+    }
+  }
+
   // AutoMower click — cycle mode (off→decomp-only→all-grass→off)
   if (autoMower) {
     const amKids = [];
@@ -7620,6 +7677,17 @@ function animate(now) {
     pondMeshes[1].material.opacity = 0.25 + Math.sin(t * 1.4) * 0.12;
   }
 
+  // Overcaffeinated camera shake — save, offset, render, restore
+  const _savedCamX = camera.position.x;
+  const _savedCamY = camera.position.y;
+  const _savedCamZ = camera.position.z;
+  if (coffeeOvercaffeinated) {
+    const shakeAmt = 0.07;
+    camera.position.x += (Math.random() - 0.5) * shakeAmt;
+    camera.position.y += (Math.random() - 0.5) * shakeAmt * 0.5;
+    camera.position.z += (Math.random() - 0.5) * shakeAmt;
+  }
+
   if (currentView === 'farm') {
     renderer.render(scene, camera);
   } else if (currentView === 'mine') {
@@ -7627,6 +7695,10 @@ function animate(now) {
     renderer.render(mineScene, camera);
   } else {
     renderer.render(townScene, camera);
+  }
+
+  if (coffeeOvercaffeinated) {
+    camera.position.set(_savedCamX, _savedCamY, _savedCamZ);
   }
 }
 animate(0);
@@ -8907,8 +8979,11 @@ function doSleep() {
   checkRoboticsUnlock();
   mineLevel = 1;
   if (mineTileGrid.length > 0) { generateMineLevel(mineLevel); initMineBats(); }
-  // Slept → full stamina
+  // Slept → full stamina, clear caffeine
   stamina = STAMINA_MAX;
+  coffeeOvercaffeinated = false;
+  coffeesToday = 0;
+  _coffeeLastDay = dayCount;
   _staminaExhausted = false;
   _tiredWarningShown = false;
   updateStaminaUI();
@@ -9019,8 +9094,14 @@ townScene.add(pathNS);
 })();
 
 // ---- Church (north) ----
+const churchMeshes = [];
+let titheDaysCount = 0;    // separate days user has tithed
+let lastTitheDay   = -1;   // dayCount of last tithe (prevent multi-tithe same day)
+let churchFlowersAdded = false;
+let churchStainedGlassAdded = false;
+const churchGroup = new THREE.Group();
 (function() {
-  const grp = new THREE.Group();
+  const grp = churchGroup;
   const stoneMat = new THREE.MeshLambertMaterial({ color: 0xa8a8a8 });
   const roofMat  = new THREE.MeshLambertMaterial({ color: 0x404040 });
   const winMat   = new THREE.MeshLambertMaterial({ color: 0x3355cc });
@@ -9047,6 +9128,7 @@ townScene.add(pathNS);
     const w = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.0, 0.12), winMat);
     w.position.set(x, 2.2, 2.55); grp.add(w);
   });
+  grp.traverse(m => { if (m.isMesh) { m.userData.building = 'church'; churchMeshes.push(m); } });
   grp.position.set(0, 0, -10);
   townScene.add(grp);
 })();
@@ -9236,7 +9318,7 @@ const lblRobotics   = makeTownLabel('🔧 Under Construction', 'lbl-robotics');
 const TOWN_WORLD_LABELS = [
   { el: lblSupply,     pos: new THREE.Vector3(-10, 5, 0) },
   { el: lblRestaurant, pos: new THREE.Vector3( 10, 5, 0) },
-  { el: lblChurch,     pos: new THREE.Vector3(  0, 10,-10) },
+  { el: lblChurch,     pos: new THREE.Vector3(  0, 4.5,-10) },
   { el: lblAnimal,     pos: new THREE.Vector3(-10, 5, 8) },
   { el: lblRobotics,   pos: new THREE.Vector3(  0, 5, 8) },
 ];
@@ -9340,6 +9422,7 @@ function switchToFarm() {
   document.getElementById('restaurant-overlay').style.display = 'none';
   document.getElementById('animal-overlay').style.display = 'none';
   document.getElementById('robotics-overlay').style.display = 'none';
+  document.getElementById('church-overlay').style.display = 'none';
   document.getElementById('btn-town').classList.remove('active-scene');
   document.getElementById('btn-farm').classList.add('active-scene');
   showTip(HINT[currentTool], false);
@@ -9437,7 +9520,34 @@ function buySeeds(k) {
   showTip(`✅ Bought ${SEED_BUY_AMT} ${CROPS[k].name} seeds!`);
 }
 
+const COFFEE_PRICE = 8;
+const COFFEE_STAMINA = Math.floor(STAMINA_MAX * 0.25);
+
+function buyCoffee() {
+  if (gold < COFFEE_PRICE) { showTip('⚠️ Not enough gold! Need ' + COFFEE_PRICE + '🪙'); return; }
+  // Reset counter if new day
+  if (dayCount !== _coffeeLastDay) { coffeesToday = 0; _coffeeLastDay = dayCount; }
+  gold -= COFFEE_PRICE;
+  stamina = Math.min(STAMINA_MAX, stamina + COFFEE_STAMINA);
+  coffeesToday++;
+  updateGoldUI();
+  updateStaminaUI();
+  if (coffeesToday >= 4 && !coffeeOvercaffeinated) {
+    coffeeOvercaffeinated = true;
+    showTip('☕☕☕☕ Too much coffee! Your hands are shaking!');
+  } else if (coffeesToday === 4) {
+    showTip('☕☕☕☕ Too much coffee! Your hands are shaking!');
+  } else {
+    showTip('☕ Coffee! +25% stamina' + (coffeesToday === 3 ? ' (one more and you may regret it…)' : ''));
+  }
+  openRestaurant();
+}
+
 function openRestaurant() {
+  // Coffee row
+  const coffeeRow = document.getElementById('coffee-row');
+  coffeeRow.innerHTML = `<span>☕ Coffee — restores 25% stamina</span>
+    <button class="shop-buy-btn" onclick="buyCoffee()">Buy ${COFFEE_PRICE}🪙</button>`;
   const sellRows = document.getElementById('sell-rows');
   sellRows.innerHTML = '';
   let any = false;
@@ -9781,6 +9891,91 @@ function buyIncubator() {
   showTip('✅ Egg Incubator placed on your farm!');
 }
 
+// ================================================================
+//  CHURCH — TITHE SYSTEM
+// ================================================================
+function openChurch() {
+  const titheRow = document.getElementById('tithe-row');
+  const titheAmt = Math.floor(gold * 0.10);
+  const alreadyToday = lastTitheDay === dayCount;
+  if (alreadyToday) {
+    titheRow.innerHTML = '<span>🙏 Tithe</span><span style="color:#88ff88;font-weight:700">✅ Tithed today</span>';
+  } else {
+    titheRow.innerHTML = `<span>🙏 Tithe — donate 10% of gold (${titheAmt}🪙)</span>
+      <button class="shop-buy-btn" onclick="tithe()">Donate</button>`;
+  }
+  const info = document.getElementById('tithe-info');
+  info.textContent = `Tithed on ${titheDaysCount} day${titheDaysCount !== 1 ? 's' : ''}` +
+    (titheDaysCount < 5 ? ` — ${5 - titheDaysCount} more for a blessing` : ' — Blessed! ✨');
+  document.getElementById('church-overlay').style.display = 'flex';
+}
+
+function tithe() {
+  if (lastTitheDay === dayCount) { showTip('⛪ You already tithed today.'); return; }
+  const amt = Math.floor(gold * 0.10);
+  if (amt <= 0) { showTip('⚠️ You have no gold to tithe!'); return; }
+  gold -= amt;
+  lastTitheDay = dayCount;
+  titheDaysCount++;
+  updateGoldUI();
+  showTip(`⛪ Donated ${amt}🪙 to the church. Bless you!`);
+  if (titheDaysCount >= 5 && !churchFlowersAdded) addChurchBlessing();
+  openChurch();
+}
+
+function addChurchBlessing() {
+  churchFlowersAdded = true;
+  churchStainedGlassAdded = true;
+  // Flowers around the church base
+  const flowerColors = [0xFF6B8A, 0xFFD700, 0xFF69B4, 0x9370DB, 0xFF4500, 0x00CED1];
+  for (let i = 0; i < 18; i++) {
+    const angle = (i / 18) * Math.PI * 2;
+    const radius = 3.5 + Math.random() * 1.5;
+    const fx = Math.cos(angle) * radius;
+    const fz = Math.sin(angle) * radius;
+    const col = flowerColors[i % flowerColors.length];
+    const stemMat = new THREE.MeshLambertMaterial({ color: 0x228B22 });
+    const petalMat = new THREE.MeshLambertMaterial({ color: col });
+    const centerMat = new THREE.MeshLambertMaterial({ color: 0xFFFF00 });
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 5), stemMat);
+    stem.position.set(fx, 0.2, fz); churchGroup.add(stem);
+    const petals = new THREE.Mesh(new THREE.SphereGeometry(0.18, 6, 5), petalMat);
+    petals.scale.set(1, 0.5, 1);
+    petals.position.set(fx, 0.45, fz); churchGroup.add(petals);
+    const center = new THREE.Mesh(new THREE.SphereGeometry(0.08, 5, 4), centerMat);
+    center.position.set(fx, 0.48, fz); churchGroup.add(center);
+  }
+  // Stained glass window — circular, on front of tower
+  const glassColors = [0xFF0000, 0xFF8C00, 0xFFFF00, 0x00FF00, 0x0000FF, 0x8B00FF, 0xFF1493, 0x00CED1];
+  const sgGroup = new THREE.Group();
+  // Outer ring (white frame)
+  const frameMat = new THREE.MeshLambertMaterial({ color: 0xE8E0D0 });
+  const frame = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.14, 16), frameMat);
+  frame.rotation.x = Math.PI / 2;
+  sgGroup.add(frame);
+  // Colored wedges
+  for (let i = 0; i < 8; i++) {
+    const a1 = (i / 8) * Math.PI * 2;
+    const a2 = ((i + 0.5) / 8) * Math.PI * 2;
+    const cx = Math.cos(a2) * 0.32;
+    const cy = Math.sin(a2) * 0.32;
+    const wedge = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.28, 0.28, 0.15, 6, 1, false, a1, Math.PI * 2 / 8),
+      new THREE.MeshLambertMaterial({ color: glassColors[i], transparent: true, opacity: 0.75 })
+    );
+    wedge.rotation.x = Math.PI / 2;
+    sgGroup.add(wedge);
+  }
+  // Center circle
+  const centerGlass = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.16, 12),
+    new THREE.MeshLambertMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.8 }));
+  centerGlass.rotation.x = Math.PI / 2;
+  sgGroup.add(centerGlass);
+  sgGroup.position.set(0, 3.8, 2.92);
+  churchGroup.add(sgGroup);
+  showTip('✨ The church is blessed! Flowers bloom and a stained glass window appears!');
+}
+
 function buyEgg() {
   if (!hasIncubator) { showTip('⚠️ You need an incubator first!'); return; }
   if (gold < EGG_PRICE) { showTip(`⚠️ Not enough gold! Need ${EGG_PRICE}🪙`); return; }
@@ -9857,7 +10052,8 @@ canvas.addEventListener('click', e => {
   if (document.getElementById('supply-overlay').style.display === 'flex' ||
       document.getElementById('restaurant-overlay').style.display === 'flex' ||
       document.getElementById('animal-overlay').style.display === 'flex' ||
-      document.getElementById('robotics-overlay').style.display === 'flex') return;
+      document.getElementById('robotics-overlay').style.display === 'flex' ||
+      document.getElementById('church-overlay').style.display === 'flex') return;
   const rect = canvas.getBoundingClientRect();
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
@@ -9869,6 +10065,7 @@ canvas.addEventListener('click', e => {
   if (bld === 'restaurant') openRestaurant();
   if (bld === 'animal')     openAnimalShop();
   if (bld === 'robotics')   openRoboticsShop();
+  if (bld === 'church')     openChurch();
 });
 
 // Town label hover feedback
@@ -9878,7 +10075,7 @@ canvas.addEventListener('mousemove', e => {
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
   townRaycaster.setFromCamera({ x: mx, y: my }, camera);
-  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...animalMeshes, ...roboticsBuiltMeshes], false);
+  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...churchMeshes], false);
   canvas.style.cursor = hits.length ? 'pointer' : 'default';
 });
 
