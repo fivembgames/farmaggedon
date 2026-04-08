@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -c index.html)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const html=fs.readFileSync\\('index.html','utf8'\\); const m=html.match\\(/<script[^>]*>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\); if\\(m\\) m.forEach\\(\\(s,i\\)=>{ const code=s.replace\\(/<\\\\/?script[^>]*>/g,''\\); try { new Function\\(code\\); console.log\\('Script block '+i+': OK'\\); } catch\\(e\\) { console.log\\('Script block '+i+': '+e.message\\); } }\\);\")",
+      "Bash(where.exe node:*)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" -e \"const fs=require\\('fs'\\); const html=fs.readFileSync\\('c:/Users/Mario/Documents/correctgit/farmaggedon/index.html','utf8'\\); const m=html.match\\(/<script[^>]*>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\); if\\(m\\) m.forEach\\(\\(s,i\\)=>{ const code=s.replace\\(/<\\\\/?script[^>]*>/g,''\\); try { new Function\\(code\\); console.log\\('Script block '+i+': OK'\\); } catch\\(e\\) { console.log\\('Script block '+i+': '+e.message\\); } }\\);\")",
+      "Bash(cmd.exe /c \"where node\")"
+    ]
+  }
+}

@@ -317,6 +317,19 @@
     .shop-buy-btn:hover { background: rgba(60,190,100,.95); transform: scale(1.06); }
     .shop-sell-btn { background: rgba(180,80,30,.85); }
     .shop-sell-btn:hover { background: rgba(210,100,40,.95); }
+    .uni-tab { font-size:.75rem; padding:4px 10px; border-radius:8px; background:rgba(60,60,80,.7); }
+    .uni-tab.active { background:rgba(80,140,220,.85); }
+    .uni-skill { position:relative; background:rgba(255,255,255,.06); border-radius:10px; padding:10px; margin:6px 0; }
+    .uni-skill.locked { opacity:.55; }
+    .uni-skill.unlocked { border:1px solid #88ff88; }
+    .uni-skill-title { font-weight:800; font-size:.92rem; }
+    .uni-skill-desc  { font-size:.78rem; color:#ccc; margin:3px 0; }
+    .uni-skill-cost  { font-size:.75rem; color:#aaa; }
+    .uni-tree-line { position:absolute; background:#555; width:2px; left:50%; }
+    .uni-tree-branch { position:relative; display:flex; gap:8px; }
+    .uni-tree-branch::before { content:''; position:absolute; top:-14px; left:25%; right:25%; height:2px; background:#555; }
+    .uni-tree-branch > div { flex:1; }
+    .uni-tree-branch > div::before { content:''; position:absolute; top:-14px; left:50%; width:2px; height:14px; background:#555; }
     .shop-close-btn {
       position: absolute; top: 12px; right: 16px;
       background: none; border: none; color: #aaa; font-size: 1.4rem;
@@ -688,6 +701,22 @@
       <h4>Sell Crops</h4>
       <div id="sell-rows"></div>
     </div>
+  </div>
+</div>
+
+<!-- University Overlay -->
+<div class="shop-overlay" id="university-overlay">
+  <div class="shop-modal" style="max-width:420px">
+    <button class="shop-close-btn" onclick="document.getElementById('university-overlay').style.display='none'">✕</button>
+    <div class="shop-title">🏛️ University</div>
+    <div style="display:flex;gap:4px;margin-bottom:10px;justify-content:center" id="uni-tabs">
+      <button class="shop-buy-btn uni-tab active" onclick="switchUniTab('biology')" id="uni-tab-biology">🧬 Biology</button>
+      <button class="shop-buy-btn uni-tab" onclick="switchUniTab('engineering')" id="uni-tab-engineering">⚙️ Engineering</button>
+      <button class="shop-buy-btn uni-tab" onclick="switchUniTab('aerospace')" id="uni-tab-aerospace">🚀 Aerospace</button>
+    </div>
+    <div id="uni-panel-biology" class="uni-panel"></div>
+    <div id="uni-panel-engineering" class="uni-panel" style="display:none"><div style="color:#aaa;text-align:center;padding:18px 0">Coming soon…</div></div>
+    <div id="uni-panel-aerospace" class="uni-panel" style="display:none"><div style="color:#aaa;text-align:center;padding:18px 0">Coming soon…</div></div>
   </div>
 </div>
 
@@ -1325,6 +1354,8 @@ let waterCharges   = WATER_MAX_CHARGES;
 let currentTool    = TOOL.HOE;
 let selectedCrop   = 'wheat';
 let gold           = 600;
+let totalGoldSpent = 0;
+let _prevGoldTrack = 600;
 
 // ================================================================
 //  STAMINA
@@ -1430,6 +1461,7 @@ function onStaminaExhausted() {
   tickWeatherDay();
   checkRoboticsUnlock();
   checkBlacksmithUnlock();
+  checkUniversityUnlock();
   checkUpgradeCompletion();
 
   // Reset mine to floor 1
@@ -2059,6 +2091,7 @@ function tickDayNight(dt) {
     tickWeatherDay();
     checkRoboticsUnlock();
     checkBlacksmithUnlock();
+    checkUniversityUnlock();
     checkUpgradeCompletion();
   }
 }
@@ -3138,7 +3171,7 @@ function tickObstacleGrowth() {
     }
 
     // ---- Fertilizer expiry ----
-    if (d.fertilized && dayCount - d.fertilizeDay >= FERTILIZER_DAYS) {
+    if (d.fertilized && dayCount - d.fertilizeDay >= FERTILIZER_DAYS + (bioSkills.microbiology ? 1 : 0)) {
       d.fertilized = false;
       if (d.fertileMesh) { scene.remove(d.fertileMesh); d.fertileMesh = null; }
       showTip('🌿 Fertilizer on a plot has expired.', false);
@@ -3804,22 +3837,34 @@ function tickBlightBugs(now) {
         const d = bug.targetTile.userData;
 
         if (d.state >= ST.SEEDED && d.state <= ST.READY) {
-          // Has a crop — start eating
-          bug.state     = 'eating';
-          bug.eatStartMs = now;
-          bug.el.classList.add('eating');
-          sndBlightEat();
-        } else if (d.state !== ST.BLIGHTED) {
-          // Empty / tilled — immediately blight it
-          blightTile(bug.targetTile);
-          showTip('🦠 Blight bug infested a plot!');
-          // Spread to nearby tile
-          const spread = pickSpreadTarget(d.x, d.z);
-          if (spread) {
-            bug.targetTile = spread;
-            bug.state = 'moving';
-          } else {
+          // Till Worms: 30% chance to deter blight bug from eating crop
+          if (bioSkills.tillWorms && Math.random() < 0.30) {
+            showTip('🪱 Till worms deterred a blight bug!');
             squashBug(bug);
+          } else {
+            // Has a crop — start eating
+            bug.state     = 'eating';
+            bug.eatStartMs = now;
+            bug.el.classList.add('eating');
+            sndBlightEat();
+          }
+        } else if (d.state !== ST.BLIGHTED) {
+          // Till Worms: 30% chance to deter blight bug from blighting soil
+          if (bioSkills.tillWorms && Math.random() < 0.30) {
+            showTip('🪱 Till worms deterred a blight bug!');
+            squashBug(bug);
+          } else {
+            // Empty / tilled — immediately blight it
+            blightTile(bug.targetTile);
+            showTip('🦠 Blight bug infested a plot!');
+            // Spread to nearby tile
+            const spread = pickSpreadTarget(d.x, d.z);
+            if (spread) {
+              bug.targetTile = spread;
+              bug.state = 'moving';
+            } else {
+              squashBug(bug);
+            }
           }
         }
       } else {
@@ -3833,25 +3878,31 @@ function tickBlightBugs(now) {
     // ---- EATING ----
     if (bug.state === 'eating') {
       if (now - bug.eatStartMs >= BLIGHT_EAT_MS) {
-        // Finished eating — blight the tile
-        const d = bug.targetTile.userData;
-        blightTile(bug.targetTile);
-        showTip('🦠 Blight bug destroyed a crop and spread!');
-
-        // Spawn offspring
-        const offspringTarget = pickSpreadTarget(d.x, d.z);
-        if (offspringTarget) {
-          createBlightBug(bug.wx, bug.wz, offspringTarget);
-        }
-
-        // Original bug also spreads
-        const myNext = pickSpreadTarget(d.x, d.z);
-        if (myNext) {
-          bug.targetTile = myNext;
-          bug.state = 'moving';
-          bug.el.classList.remove('eating');
+        // Aromatics: 30% chance to reset eating timer instead of destroying
+        if (bioSkills.aromatics && Math.random() < 0.30) {
+          bug.eatStartMs = now;
+          showTip('🌸 Aromatics confused a blight bug!');
         } else {
-          squashBug(bug);
+          // Finished eating — blight the tile
+          const d = bug.targetTile.userData;
+          blightTile(bug.targetTile);
+          showTip('🦠 Blight bug destroyed a crop and spread!');
+
+          // Spawn offspring
+          const offspringTarget = pickSpreadTarget(d.x, d.z);
+          if (offspringTarget) {
+            createBlightBug(bug.wx, bug.wz, offspringTarget);
+          }
+
+          // Original bug also spreads
+          const myNext = pickSpreadTarget(d.x, d.z);
+          if (myNext) {
+            bug.targetTile = myNext;
+            bug.state = 'moving';
+            bug.el.classList.remove('eating');
+          } else {
+            squashBug(bug);
+          }
         }
       }
     }
@@ -4088,14 +4139,20 @@ function tickHopper(now) {
 
     // Eat ripe crop on current tile
     if (now > h.eatTimer) {
-      h.eatTimer = now + HOPPER_EAT_MS;
-      const d = h.tile.userData;
-      if (d.state === ST.READY) {
-        if (d.plant) { scene.remove(d.plant); d.plant = null; }
-        d.state = ST.TILLED; d.cropKey = null; d.watered = false; d.waterCount = 0; d.tilledDay = dayCount;
-        h.tile.material.color.setHex(SOIL_COL[ST.TILLED]);
-        showTip('🦗 Grasshopper ate a ripe crop!');
-        sndCropEaten();
+      // Aromatics: 30% chance to reset eating timer
+      if (bioSkills.aromatics && Math.random() < 0.30) {
+        h.eatTimer = now + HOPPER_EAT_MS;
+        showTip('🌸 Aromatics repelled a grasshopper!');
+      } else {
+        h.eatTimer = now + HOPPER_EAT_MS;
+        const d = h.tile.userData;
+        if (d.state === ST.READY) {
+          if (d.plant) { scene.remove(d.plant); d.plant = null; }
+          d.state = ST.TILLED; d.cropKey = null; d.watered = false; d.waterCount = 0; d.tilledDay = dayCount;
+          h.tile.material.color.setHex(SOIL_COL[ST.TILLED]);
+          showTip('🦗 Grasshopper ate a ripe crop!');
+          sndCropEaten();
+        }
       }
     }
   }
@@ -8491,7 +8548,7 @@ function switchToMine() {
   // Hide blightbugs
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
   // Hide town labels
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith].forEach(l => l.style.display = 'none');
+  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
   // Update scene buttons
   document.getElementById('btn-farm').classList.remove('active-scene');
   document.getElementById('btn-town').classList.remove('active-scene');
@@ -9090,6 +9147,7 @@ function doSleep() {
   tickWeatherDay();
   checkRoboticsUnlock();
   checkBlacksmithUnlock();
+  checkUniversityUnlock();
   checkUpgradeCompletion();
   mineLevel = 1;
   closeRopeBubbles();
@@ -9296,6 +9354,142 @@ const churchGroup = new THREE.Group();
   grp.traverse(m => { if (m.isMesh) { m.userData.building = 'church'; churchMeshes.push(m); } });
   grp.position.set(0, 0, -10);
   townScene.add(grp);
+})();
+
+// ---- University (left of church) ----
+let universityConstrGrp = null;
+let universityBuiltGrp  = null;
+const universityMeshes  = [];
+let universityUnlocked  = false;
+
+// Under construction
+(function() {
+  const grp      = new THREE.Group();
+  const beamMat  = new THREE.MeshLambertMaterial({ color: 0x9B6930 });
+  const plankMat = new THREE.MeshLambertMaterial({ color: 0xC09050 });
+  const signMat  = new THREE.MeshLambertMaterial({ color: 0xFFCC00 });
+  [[-4.5,-3.5],[4.5,-3.5],[-4.5,3.5],[4.5,3.5]].forEach(([x,z]) => {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.22,6.5,0.22), beamMat);
+    p.position.set(x,3.25,z); grp.add(p);
+  });
+  const tb1 = new THREE.Mesh(new THREE.BoxGeometry(9.5,0.18,0.18), beamMat);
+  tb1.position.set(0,6.2,-3.5); grp.add(tb1);
+  const tb2 = tb1.clone(); tb2.position.set(0,6.2,3.5); grp.add(tb2);
+  [[0,1.2,0],[0.2,2.5,0.1],[-0.1,3.8,-0.1]].forEach(([px,py,pz]) => {
+    const pl = new THREE.Mesh(new THREE.BoxGeometry(8.0,0.10,0.6), plankMat);
+    pl.position.set(px,py,pz); grp.add(pl);
+  });
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(5.0,0.8,0.12), signMat);
+  sign.position.set(0,3.5,-3.7); grp.add(sign);
+  [-1.2,0,1.2].forEach(sx => {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(0.35,0.78,0.14), new THREE.MeshLambertMaterial({color:0x111111}));
+    s.position.set(sx,3.5,-3.7); grp.add(s);
+  });
+  grp.position.set(-10, 0, -10);
+  townScene.add(grp);
+  universityConstrGrp = grp;
+})();
+
+// Built
+(function() {
+  const grp = new THREE.Group();
+  // Brick material
+  const brickMat  = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+  const brickDk   = new THREE.MeshLambertMaterial({ color: 0x6B3410 });
+  const stuccoMat = new THREE.MeshLambertMaterial({ color: 0xD2B48C });
+  const stuccoDk  = new THREE.MeshLambertMaterial({ color: 0xBFA07A });
+  const doorMat   = new THREE.MeshLambertMaterial({ color: 0x3A1A08 });
+  const winMat    = new THREE.MeshLambertMaterial({ color: 0x88BBDD });
+  const trimMat   = new THREE.MeshLambertMaterial({ color: 0xE8DCC8 });
+  const colMat    = new THREE.MeshLambertMaterial({ color: 0xD8CEB8 });
+
+  // Main body — 11 × 7 × 9
+  const body = new THREE.Mesh(new THREE.BoxGeometry(11, 7, 9), brickMat);
+  body.position.set(0, 3.5, 0); grp.add(body);
+
+  // Brick line details on front/back
+  for (let row = 0; row < 8; row++) {
+    const ln = new THREE.Mesh(new THREE.BoxGeometry(11.02, 0.04, 0.01), brickDk);
+    ln.position.set(0, 0.5 + row * 0.88, 4.51); grp.add(ln);
+    const ln2 = ln.clone(); ln2.position.z = -4.51; grp.add(ln2);
+  }
+  // Vertical brick columns on sides
+  for (let col = 0; col < 5; col++) {
+    const vl = new THREE.Mesh(new THREE.BoxGeometry(0.04, 7.02, 0.01), brickDk);
+    vl.position.set(-4.5 + col * 2.25, 3.5, 4.51); grp.add(vl);
+  }
+
+  // Stucco roof — gabled, textured
+  const roofL = new THREE.Mesh(new THREE.BoxGeometry(12, 0.35, 5.5), stuccoMat);
+  roofL.rotation.z = 0.38;
+  roofL.position.set(-2.5, 7.85, 0); grp.add(roofL);
+  const roofR = new THREE.Mesh(new THREE.BoxGeometry(12, 0.35, 5.5), stuccoMat);
+  roofR.rotation.z = -0.38;
+  roofR.position.set(2.5, 7.85, 0); grp.add(roofR);
+  // Ridge
+  const ridge = new THREE.Mesh(new THREE.BoxGeometry(12.2, 0.25, 0.25), stuccoDk);
+  ridge.position.set(0, 8.85, 0); grp.add(ridge);
+  // Stucco texture strips
+  for (let i = 0; i < 6; i++) {
+    [-1, 1].forEach(side => {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(11.8, 0.06, 0.15), stuccoDk);
+      strip.rotation.z = side * 0.38;
+      strip.position.set(side * 2.5, 7.5 + i * 0.22, 0); grp.add(strip);
+    });
+  }
+
+  // Front columns (classical style)
+  [-3.5, -1.2, 1.2, 3.5].forEach(x => {
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 5.5, 8), colMat);
+    col.position.set(x, 2.75, 4.55); grp.add(col);
+    // Capital
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.22, 0.65), trimMat);
+    cap.position.set(x, 5.55, 4.55); grp.add(cap);
+    // Base
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.15, 0.55), trimMat);
+    base.position.set(x, 0.08, 4.55); grp.add(base);
+  });
+
+  // Entablature (beam above columns)
+  const entab = new THREE.Mesh(new THREE.BoxGeometry(9.0, 0.4, 0.7), trimMat);
+  entab.position.set(0, 5.8, 4.55); grp.add(entab);
+
+  // Large double doors
+  [-0.5, 0.5].forEach(xo => {
+    const d = new THREE.Mesh(new THREE.BoxGeometry(0.9, 3.0, 0.15), doorMat);
+    d.position.set(xo, 1.5, 4.58); grp.add(d);
+  });
+  // Door arch
+  const arch = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.15, 12, 1, false, 0, Math.PI), doorMat);
+  arch.rotation.x = Math.PI / 2; arch.rotation.z = Math.PI;
+  arch.position.set(0, 3.0, 4.58); grp.add(arch);
+
+  // Windows — 3 rows of 4
+  [1.8, 3.4, 5.0].forEach(y => {
+    [-3.5, -1.2, 1.2, 3.5].forEach(x => {
+      if (y === 1.8 && Math.abs(x) <= 1.2) return; // skip door area
+      const w = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.12), winMat);
+      w.position.set(x, y, 4.52); grp.add(w);
+      // Window frame
+      const fr = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.0, 0.10), trimMat);
+      fr.position.set(x, y, 4.50); grp.add(fr);
+    });
+  });
+
+  // Side windows
+  [-3.0, 0, 3.0].forEach(z => {
+    [1.8, 3.4, 5.0].forEach(y => {
+      const w = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.7), winMat);
+      w.position.set(5.52, y, z); grp.add(w);
+      const w2 = w.clone(); w2.position.x = -5.52; grp.add(w2);
+    });
+  });
+
+  grp.traverse(m => { if (m.isMesh) { m.userData.building = 'university'; universityMeshes.push(m); } });
+  grp.position.set(-10, 0, -10);
+  grp.visible = false;
+  townScene.add(grp);
+  universityBuiltGrp = grp;
 })();
 
 // ---- Supply Store (west/left) ----
@@ -9597,6 +9791,7 @@ const lblChurch     = makeTownLabel('⛪ Church', 'lbl-church');
 const lblAnimal     = makeTownLabel('🐔 Animal Shop', 'lbl-animal');
 const lblRobotics     = makeTownLabel('🔧 Under Construction', 'lbl-robotics');
 const lblBlacksmith   = makeTownLabel('🔨 Under Construction', 'lbl-blacksmith');
+const lblUniversity   = makeTownLabel('🏛️ Under Construction', 'lbl-university');
 const TOWN_WORLD_LABELS = [
   { el: lblSupply,     pos: new THREE.Vector3(-10, 5, 0) },
   { el: lblRestaurant, pos: new THREE.Vector3( 10, 5, 0) },
@@ -9604,6 +9799,7 @@ const TOWN_WORLD_LABELS = [
   { el: lblAnimal,     pos: new THREE.Vector3(-10, 5, 8) },
   { el: lblRobotics,   pos: new THREE.Vector3(  0, 5, 8) },
   { el: lblBlacksmith, pos: new THREE.Vector3(3.7, 4, 8) },
+  { el: lblUniversity, pos: new THREE.Vector3(-10, 9, -10) },
 ];
 
 function updateTownLabels() {
@@ -9655,7 +9851,7 @@ function switchToTown() {
   if (incubatorMesh) incubatorMesh.visible = false;
   if (chickenCoopMesh) chickenCoopMesh.visible = false;
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith].forEach(l => l.style.display = 'block');
+  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'block');
   if (roboSweeper) roboSweeper.mesh.visible = false;
   if (eggcavator) eggcavator.mesh.visible = false;
   if (autoMower) autoMower.mesh.visible = false;
@@ -9695,7 +9891,7 @@ function switchToFarm() {
   if (chickenCoopMesh) chickenCoopMesh.visible = true;
   updateHopperHUD();
   blightBugs.forEach(b => { b.el.style.visibility = ''; });
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith].forEach(l => l.style.display = 'none');
+  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
   if (roboSweeper) roboSweeper.mesh.visible = true;
   if (eggcavator) eggcavator.mesh.visible = true;
   if (autoMower) autoMower.mesh.visible = true;
@@ -9707,6 +9903,7 @@ function switchToFarm() {
   document.getElementById('robotics-overlay').style.display = 'none';
   document.getElementById('church-overlay').style.display = 'none';
   document.getElementById('blacksmith-overlay').style.display = 'none';
+  document.getElementById('university-overlay').style.display = 'none';
   document.getElementById('btn-town').classList.remove('active-scene');
   document.getElementById('btn-farm').classList.add('active-scene');
   showTip(HINT[currentTool], false);
@@ -9740,6 +9937,8 @@ const SEED_BUY_AMT = 5;
 
 function updateGoldUI() {
   document.getElementById('gold').textContent = gold;
+  if (gold < _prevGoldTrack) totalGoldSpent += _prevGoldTrack - gold;
+  _prevGoldTrack = gold;
 }
 
 function openSupplyStore() {
@@ -10217,6 +10416,127 @@ function startToolUpgrade(t) {
   openBlacksmith();
 }
 
+// ================================================================
+//  UNIVERSITY
+// ================================================================
+const bioSkills = {
+  microbiology: false,
+  tillWorms:    false,
+  aromatics:    false,
+};
+let _uniTab = 'biology';
+
+function checkUniversityUnlock() {
+  if (universityUnlocked) return;
+  if (dayCount < 6 || totalGoldSpent < 300) return;
+  universityUnlocked = true;
+  if (universityConstrGrp) universityConstrGrp.visible = false;
+  if (universityBuiltGrp)  universityBuiltGrp.visible  = true;
+  lblUniversity.textContent = '🏛️ University';
+  showTip('🏛️ The University is now open! Advance your knowledge!');
+}
+
+function switchUniTab(tab) {
+  _uniTab = tab;
+  ['biology','engineering','aerospace'].forEach(t => {
+    document.getElementById('uni-panel-' + t).style.display = t === tab ? '' : 'none';
+    document.getElementById('uni-tab-' + t).classList.toggle('active', t === tab);
+  });
+  if (tab === 'biology') renderBioTree();
+}
+
+function openUniversity() {
+  if (!universityUnlocked) { showTip('🏛️ Still under construction…'); return; }
+  renderBioTree();
+  _uniTab = 'biology';
+  switchUniTab('biology');
+  document.getElementById('university-overlay').style.display = 'flex';
+}
+
+function renderBioTree() {
+  const panel = document.getElementById('uni-panel-biology');
+  const micro = bioSkills.microbiology;
+  const worms = bioSkills.tillWorms;
+  const aroma = bioSkills.aromatics;
+
+  // Helper for skill card
+  function card(id, title, desc, costHtml, unlocked, canBuy, prereqMet) {
+    const cls = unlocked ? 'uni-skill unlocked' : (prereqMet ? 'uni-skill' : 'uni-skill locked');
+    const badge = unlocked ? '<span style="color:#88ff88;font-weight:700;float:right">✅</span>' : '';
+    const btn = (!unlocked && prereqMet)
+      ? `<button class="shop-buy-btn" style="margin-top:5px;font-size:.78rem" ${canBuy?'':'disabled style="margin-top:5px;font-size:.78rem;opacity:.45"'} onclick="unlockBioSkill('${id}')">Research</button>`
+      : '';
+    return `<div class="${cls}"><div class="uni-skill-title">${title}${badge}</div><div class="uni-skill-desc">${desc}</div><div class="uni-skill-cost">${costHtml}</div>${btn}</div>`;
+  }
+
+  // Costs & checks
+  const microCost = '100🪙 + 10🍂 plant matter';
+  const microCan  = gold >= 100 && materials.plantMatter >= 10;
+
+  const wormsCost = '200🪙 + 50🍂 plant matter + 10💩 compost';
+  const wormsCan  = gold >= 200 && materials.plantMatter >= 50 && materials.poop >= 10;
+
+  const aromaCost = '200🪙 + 5🌿 fertilizer';
+  const aromaCan  = gold >= 200 && materials.fertilizer >= 5;
+
+  let html = '';
+  // Root: Microbiology
+  html += card('microbiology', '🔬 Microbiology',
+    'Fertilizer lasts 1 extra day.',
+    microCost, micro, microCan, true);
+
+  // Connector line
+  if (micro) {
+    html += '<div style="text-align:center;height:18px"><div style="width:2px;height:18px;background:#555;margin:0 auto"></div></div>';
+    // Branch
+    html += '<div class="uni-tree-branch">';
+    html += '<div>' + card('tillWorms', '🪱 Till Worms',
+      '30% chance to deter blight bugs from blighting soil.',
+      wormsCost, worms, wormsCan, true) + '</div>';
+    html += '<div>' + card('aromatics', '🌸 Aromatics',
+      '30% chance to reset grasshopper/blight eating timer.',
+      aromaCost, aroma, aromaCan, true) + '</div>';
+    html += '</div>';
+  } else {
+    html += '<div style="text-align:center;height:18px"><div style="width:2px;height:18px;background:#333;margin:0 auto"></div></div>';
+    html += '<div class="uni-tree-branch">';
+    html += '<div>' + card('tillWorms', '🪱 Till Worms',
+      '30% chance to deter blight bugs from blighting soil.',
+      wormsCost, false, false, false) + '</div>';
+    html += '<div>' + card('aromatics', '🌸 Aromatics',
+      '30% chance to reset grasshopper/blight eating timer.',
+      aromaCost, false, false, false) + '</div>';
+    html += '</div>';
+  }
+
+  panel.innerHTML = html;
+}
+
+function unlockBioSkill(id) {
+  if (id === 'microbiology') {
+    if (bioSkills.microbiology) return;
+    if (gold < 100 || materials.plantMatter < 10) { showTip('⚠️ Not enough resources!'); return; }
+    gold -= 100; materials.plantMatter -= 10;
+    bioSkills.microbiology = true;
+    showTip('🔬 Microbiology researched! Fertilizer lasts 1 extra day.');
+  } else if (id === 'tillWorms') {
+    if (!bioSkills.microbiology || bioSkills.tillWorms) return;
+    if (gold < 200 || materials.plantMatter < 50 || materials.poop < 10) { showTip('⚠️ Not enough resources!'); return; }
+    gold -= 200; materials.plantMatter -= 50; materials.poop -= 10;
+    bioSkills.tillWorms = true;
+    showTip('🪱 Till Worms researched! Blight bugs are now deterred 30% of the time.');
+  } else if (id === 'aromatics') {
+    if (!bioSkills.microbiology || bioSkills.aromatics) return;
+    if (gold < 200 || materials.fertilizer < 5) { showTip('⚠️ Not enough resources!'); return; }
+    gold -= 200; materials.fertilizer -= 5;
+    bioSkills.aromatics = true;
+    showTip('🌸 Aromatics researched! Pests have a 30% chance to be repelled.');
+  }
+  updateGoldUI();
+  updateMaterialsUI();
+  renderBioTree();
+}
+
 function openRoboticsShop() {
   if (!roboticsUnlocked) { showTip('🔧 Still under construction…'); return; }
   const row = document.getElementById('robosweeper-row');
@@ -10481,7 +10801,8 @@ canvas.addEventListener('click', e => {
       document.getElementById('animal-overlay').style.display === 'flex' ||
       document.getElementById('robotics-overlay').style.display === 'flex' ||
       document.getElementById('church-overlay').style.display === 'flex' ||
-      document.getElementById('blacksmith-overlay').style.display === 'flex') return;
+      document.getElementById('blacksmith-overlay').style.display === 'flex' ||
+      document.getElementById('university-overlay').style.display === 'flex') return;
   const rect = canvas.getBoundingClientRect();
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
@@ -10495,6 +10816,7 @@ canvas.addEventListener('click', e => {
   if (bld === 'robotics')    openRoboticsShop();
   if (bld === 'church')      openChurch();
   if (bld === 'blacksmith')  openBlacksmith();
+  if (bld === 'university')  openUniversity();
 });
 
 // Town label hover feedback
@@ -10504,7 +10826,7 @@ canvas.addEventListener('mousemove', e => {
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
   townRaycaster.setFromCamera({ x: mx, y: my }, camera);
-  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...churchMeshes, ...blacksmithMeshes], false);
+  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...churchMeshes, ...blacksmithMeshes, ...universityMeshes], false);
   canvas.style.cursor = hits.length ? 'pointer' : 'default';
 });
 
