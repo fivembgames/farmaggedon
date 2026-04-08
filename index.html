@@ -389,6 +389,58 @@
       #stamina-track { width: 10px; height: 70px; }
     }
 
+    /* ---- SLEEP BUBBLES ---- */
+    .sleep-bubble {
+      position: fixed; background: #fff; color: #333;
+      font-size: 1rem; font-weight: 800;
+      padding: 7px 18px; border-radius: 22px;
+      border: 2px solid #666; cursor: pointer; user-select: none;
+      white-space: nowrap; z-index: 50;
+      display: none; transform: translateX(-50%);
+      box-shadow: 0 4px 14px rgba(0,0,0,.35);
+      transition: transform .1s, background .12s;
+      pointer-events: all;
+    }
+    .sleep-bubble:hover { transform: translateX(-50%) scale(1.07); }
+    .sleep-bubble::after {
+      content: ''; position: absolute;
+      bottom: -9px; left: 50%; transform: translateX(-50%);
+      border: 6px solid transparent; border-top-color: #666;
+    }
+    #sleep-bubble-yes { border-color: #22aa44; color: #22aa44; }
+    #sleep-bubble-yes::after { border-top-color: #22aa44; }
+    #sleep-bubble-yes:hover { background: #f0fff4; }
+    #sleep-bubble-no  { border-color: #cc2200; color: #cc2200; }
+    #sleep-bubble-no::after { border-top-color: #cc2200; }
+    #sleep-bubble-no:hover  { background: #fff4f0; }
+
+    /* ---- TIRED WARNING ---- */
+    #tired-warning {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 12px; pointer-events: none; z-index: 200;
+      opacity: 0;
+    }
+    #tired-warning.show {
+      animation: tiredFade 2s ease forwards;
+    }
+    @keyframes tiredFade {
+      0%   { opacity: 0; }
+      20%  { opacity: 1; }
+      50%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    #tired-emoji {
+      font-size: 5rem; line-height: 1;
+      filter: drop-shadow(0 0 18px rgba(0,0,0,.6));
+    }
+    #tired-text {
+      font-size: 1.6rem; font-weight: 800; color: #fff;
+      text-shadow: 0 2px 12px rgba(0,0,0,.8);
+      letter-spacing: .04em;
+      background: rgba(0,0,0,.35); padding: 8px 24px; border-radius: 20px;
+    }
+
     /* ---- MOBILE: prevent tap-highlight & touch callouts ---- */
     canvas { touch-action: none; }
     button, .tool-btn, .crop-btn, .scene-btn, .shop-buy-btn, .shop-sell-btn, .shop-close-btn {
@@ -742,6 +794,17 @@
   </div>
 </div>
 
+<!-- Sleep bubbles -->
+<div class="sleep-bubble" id="sleep-bubble-prompt">😴 Sleep?</div>
+<div class="sleep-bubble" id="sleep-bubble-yes">✅ Yes</div>
+<div class="sleep-bubble" id="sleep-bubble-no">❌ No</div>
+
+<!-- Tired warning overlay -->
+<div id="tired-warning">
+  <div id="tired-emoji">😫</div>
+  <div id="tired-text">You are getting tired…</div>
+</div>
+
 <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
 <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
 <script>
@@ -971,18 +1034,57 @@ addTree(-3,GRID*0.5); addTree(GRID+2.5,GRID*0.5);
   addMountain( 22, -10,  7.5, 4.0);
 })();
 
-// Barn
+// Barn — sleep system
+const barnSleepMeshes = [];
+let   barnBedGroup    = null;
+let   barnSleepState  = 'none'; // 'none' | 'prompt' | 'confirm'
+const BARN_WORLD_POS  = new THREE.Vector3(-5.5, 2.8, 1.5);
+
 (function() {
   const bx=-5.5, bz=1.5;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.4,2.2,1.8),
-    new THREE.MeshLambertMaterial({ color:0xB03A2E }));
+
+  const bodyMat = new THREE.MeshLambertMaterial({ color:0xB03A2E });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.4,2.2,1.8), bodyMat);
   body.position.set(bx,1.1,bz); body.castShadow=true; scene.add(body);
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.8,1.1,4),
-    new THREE.MeshLambertMaterial({ color:0x7B241C }));
+  body.userData.isBarn = true;
+
+  const roofMat = new THREE.MeshLambertMaterial({ color:0x7B241C });
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.8,1.1,4), roofMat);
   roof.rotation.y=Math.PI/4; roof.position.set(bx,2.75,bz); scene.add(roof);
-  const door = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.9,0.05),
-    new THREE.MeshLambertMaterial({ color:0x784212 }));
+  roof.userData.isBarn = true;
+
+  const doorMat = new THREE.MeshLambertMaterial({ color:0x784212 });
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.9,0.05), doorMat);
   door.position.set(bx,0.45,bz-0.93); scene.add(door);
+  door.userData.isBarn = true;
+
+  barnSleepMeshes.push(body, roof, door);
+
+  // Bed inside (hidden until barn is transparent)
+  const g = new THREE.Group();
+  const frameMat    = new THREE.MeshLambertMaterial({ color:0x8B4513 });
+  const mattressMat = new THREE.MeshLambertMaterial({ color:0xE8D5B0 });
+  const pillowMat   = new THREE.MeshLambertMaterial({ color:0xFFFAF0 });
+  const blanketMat  = new THREE.MeshLambertMaterial({ color:0x4A7A9B });
+  // Frame
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(1.1,0.18,1.8), frameMat);
+  frame.position.set(0, 0.40, 0.05); g.add(frame);
+  // Mattress
+  const mattress = new THREE.Mesh(new THREE.BoxGeometry(0.95,0.14,1.55), mattressMat);
+  mattress.position.set(0, 0.54, 0.05); g.add(mattress);
+  // Blanket
+  const blanket = new THREE.Mesh(new THREE.BoxGeometry(0.95,0.10,1.1), blanketMat);
+  blanket.position.set(0, 0.64, -0.18); g.add(blanket);
+  // Pillow
+  const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.68,0.10,0.26), pillowMat);
+  pillow.position.set(0, 0.65, 0.60); g.add(pillow);
+  // Headboard
+  const headboard = new THREE.Mesh(new THREE.BoxGeometry(1.1,0.55,0.08), frameMat);
+  headboard.position.set(0, 0.72, 0.72); g.add(headboard);
+  g.position.set(bx, 0, bz);
+  g.visible = false;
+  scene.add(g);
+  barnBedGroup = g;
 })();
 
 // ================================================================
@@ -1199,6 +1301,16 @@ let gold           = 600;
 const STAMINA_MAX = 100;
 let stamina = STAMINA_MAX;
 let _staminaExhausted = false; // guard: only trigger exhaust once per zero-hit
+let _tiredWarningShown = false; // only show once per stamina fill
+
+function showTiredWarning() {
+  const el = document.getElementById('tired-warning');
+  if (!el) return;
+  el.classList.remove('show');
+  // Force reflow so animation restarts cleanly
+  void el.offsetWidth;
+  el.classList.add('show');
+}
 
 function updateStaminaUI() {
   const fill  = document.getElementById('stamina-fill');
@@ -1219,8 +1331,14 @@ function updateStaminaUI() {
 
 function drainStamina(amount) {
   if (_staminaExhausted) return;
+  const prev = stamina;
   stamina = Math.max(0, stamina - amount);
   updateStaminaUI();
+  // First time crossing below 10% — show tired warning
+  if (!_tiredWarningShown && prev >= STAMINA_MAX * 0.10 && stamina < STAMINA_MAX * 0.10) {
+    _tiredWarningShown = true;
+    showTiredWarning();
+  }
   if (stamina <= 0 && !_staminaExhausted) {
     _staminaExhausted = true;
     onStaminaExhausted();
@@ -1231,7 +1349,7 @@ function onStaminaExhausted() {
   showTip('😴 You are exhausted! Sleeping until morning…');
 
   // Jump to start of next day
-  dayPhase = 0.16;   // dawn glow — just as sun is rising
+  dayPhase = 0.11;   // deep pre-dawn — dark sky, just before first light
   dayCount++;
   document.getElementById('day').textContent = dayCount;
   tickObstacleGrowth();
@@ -1245,9 +1363,11 @@ function onStaminaExhausted() {
     initMineBats();
   }
 
-  // Restore stamina fully for the new day
-  stamina = STAMINA_MAX;
+  // Exhausted without sleeping → 75% stamina penalty
+  closeBarnSleep();
+  stamina = Math.floor(STAMINA_MAX * 0.75);
   _staminaExhausted = false;
+  _tiredWarningShown = false;
   updateStaminaUI();
 
   // Play sunrise jingle (needs audio context unlocked)
@@ -1578,7 +1698,7 @@ function useTool(tile) {
 
     case TOOL.AXE:
       if (d.obstacle === OBS.TREE) {
-        hitObstacle(tile); sndChop(); drainStamina(5);
+        hitObstacle(tile); sndChop(); drainStamina(3);
       } else if (d.obstacle === OBS.ROCK) {
         showTip('⚠️  Use the pickaxe ⛏ on rocks');
       } else if (d.obstacle === OBS.GRASS) {
@@ -1588,7 +1708,7 @@ function useTool(tile) {
 
     case TOOL.PICKAXE:
       if (d.obstacle === OBS.ROCK) {
-        hitObstacle(tile); sndMine(); drainStamina(4);
+        hitObstacle(tile); sndMine(); drainStamina(2);
       } else if (d.obstacle === OBS.TREE) {
         showTip('⚠️  Use the axe 🪓 on trees');
       } else if (d.obstacle === OBS.GRASS) {
@@ -1650,7 +1770,7 @@ function useTool(tile) {
         d.tilledDay = dayCount;
         tile.material.color.setHex(SOIL_COL[ST.TILLED]);
         showTip('✅ Soil tilled!');
-        sndHoe(); drainStamina(3);
+        sndHoe(); drainStamina(2);
       } else { showTip('⚠️  Already tilled or occupied'); }
       break;
 
@@ -3653,8 +3773,8 @@ function tickBlightBugs(now) {
 const HOPPER_MAX_HP    = 5;
 const HOPPER_EAT_MS    = DAY_DURATION * 0.03;  // time to eat one crop
 const HOPPER_HOP_MS    = 1800;                  // ms between steps
-const HOPPER_SPAWN_INT = DAY_DURATION * 0.10;   // spawn one every ~48 s
-const HOPPER_MAX       = 5;                     // max simultaneous hoppers
+const HOPPER_SPAWN_INT = DAY_DURATION * 0.14;   // spawn one every ~67 s
+const HOPPER_MAX       = 4;                     // max simultaneous hoppers
 
 const hoppers = [];
 let lastHopperSpawnMs = -HOPPER_SPAWN_INT;
@@ -3968,28 +4088,29 @@ function makeChickenCoopMesh() {
     strip.position.set(x, 0.46, z); g.add(strip);
   });
 
-  // Peaked roof
+  // Peaked roof — each panel covers one slope from ridge to eave
   [-1, 1].forEach(side => {
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(1.52, 0.06, 0.65), roofMat);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.83, 0.06, 1.20), roofMat);
     panel.rotation.z = side * -0.50;
-    panel.position.set(side * 0.285, 1.03, 0); g.add(panel);
+    panel.position.set(side * 0.36, 1.01, 0); g.add(panel);
   });
 
-  // Roof shingles
+  // Roof shingles — rows from eave to ridge, columns front-to-back
   for (let row = 0; row < 3; row++) {
     for (let col = 0; col < 7; col++) {
-      const sx = -0.48 + col * 0.16;
+      const sz = -0.52 + col * 0.18 + (row % 2 ? 0.09 : 0);
       [-1, 1].forEach(side => {
         const sh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.018, 0.16), row % 2 ? roofLt : roofMat);
-        sh.position.set(sx + (row % 2 ? 0.08 : 0), 1.01 + row * 0.035, side * (0.10 + row * 0.13));
-        sh.rotation.z = side * 0.50; g.add(sh);
+        const t = (row + 0.5) / 3;
+        sh.position.set(side * 0.725 * (1 - t), 0.82 + t * 0.40, sz);
+        sh.rotation.z = side * -0.50; g.add(sh);
       });
     }
   }
 
   // Ridge cap
-  const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.08, 1.2), roofMat);
-  ridge.position.y = 1.20; g.add(ridge);
+  const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.08, 1.25), roofMat);
+  ridge.position.y = 1.21; g.add(ridge);
 
   // Door hole
   const door = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.34, 0.09), doorMat);
@@ -4595,28 +4716,29 @@ function makeCowBarnMesh() {
     p.position.set(x, 0.62, z); g.add(p);
   });
 
-  // Peaked roof
+  // Peaked roof — each panel covers one slope from ridge to eave
   [-1, 1].forEach(side => {
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.07, 0.82), roofMat);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(1.03, 0.07, 1.48), roofMat);
     panel.rotation.z = side * -0.42;
-    panel.position.set(side * 0.38, 1.28, 0); g.add(panel);
+    panel.position.set(side * 0.47, 1.33, 0); g.add(panel);
   });
 
-  // Shingle rows
+  // Shingle rows — from eave to ridge, columns front-to-back
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 9; col++) {
-      const sx = -0.72 + col * 0.18;
+      const sz = -0.65 + col * 0.165 + (row % 2 ? 0.08 : 0);
       [-1, 1].forEach(side => {
         const sh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.018, 0.16), row % 2 ? roofLt : roofMat);
-        sh.position.set(sx + (row % 2 ? 0.09 : 0), 1.26 + row * 0.04, side * (0.10 + row * 0.12));
-        sh.rotation.z = side * 0.42; g.add(sh);
+        const t = (row + 0.5) / 4;
+        sh.position.set(side * 0.94 * (1 - t), 1.13 + t * 0.42, sz);
+        sh.rotation.z = side * -0.42; g.add(sh);
       });
     }
   }
 
   // Ridge beam
   const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.09, 1.55), woodMat);
-  ridge.position.y = 1.48; g.add(ridge);
+  ridge.position.y = 1.54; g.add(ridge);
 
   // Barn door — double sliding doors
   [-0.16, 0.16].forEach(xo => {
@@ -6259,10 +6381,10 @@ function makePigStyMesh() {
   roof.rotation.x = -0.25; roof.position.set(0, 0.70, -0.35); g.add(roof);
 
   // Roof plank detail
-  for (let i = 0; i < 8; i++) {
-    const rp = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.015, 0.88), i % 2 ? roofLt : roofMat);
+  for (let i = 0; i < 9; i++) {
+    const rp = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.015, 0.88), i % 2 ? roofLt : roofMat);
     rp.rotation.x = -0.25;
-    rp.position.set(-0.84 + i * 0.24, 0.71, -0.35); g.add(rp);
+    rp.position.set(-0.92 + i * 0.23, 0.71, -0.35); g.add(rp);
   }
 
   // Roof support beams (diagonals at sides)
@@ -7215,6 +7337,17 @@ canvas.addEventListener('click', async e => {
   mouse.y = ((e.clientY - r.top)  / r.height) * -2 + 1;
   raycaster.setFromCamera(mouse, camera);
 
+  // Barn sleep click — clicking anywhere outside barn while prompt is open closes it
+  if (barnSleepMeshes.length > 0) {
+    const barnHits = raycaster.intersectObjects(barnSleepMeshes);
+    if (barnHits.length > 0) {
+      if (barnSleepState === 'none') openBarnSleep();
+      return; // don't fall through to tile/tool logic
+    } else if (barnSleepState !== 'none') {
+      closeBarnSleep();
+    }
+  }
+
   // AutoMower click — cycle mode (off→decomp-only→all-grass→off)
   if (autoMower) {
     const amKids = [];
@@ -7465,6 +7598,7 @@ function animate(now) {
     tickDayNight(dt);
     tickWeatherParticles();
     if (Math.random() < 0.33) tickWeatherEmit();
+    updateSleepBubbles();
   }
 
   const t = now * 0.001;
@@ -8034,7 +8168,7 @@ function hitMineRock(x, z) {
   const td = mineTileGrid[x][z];
   if (!td || !td.hasRock || td.hp <= 0) return;
 
-  sndMine(); drainStamina(5);
+  sndMine(); drainStamina(3);
   // Flash rock red
   const rm = mineRockMeshes[x][z];
   if (rm) {
@@ -8086,7 +8220,7 @@ function digMineTile(x, z) {
   // Already-revealed tunnel — don't dig again
   if (td.isTunnel) return;
 
-  sndDig(); drainStamina(3);
+  sndDig(); drainStamina(2);
   td.isDug = true;
   const tileMesh = mineTileMeshes[x][z];
   if (tileMesh) tileMesh.material.color.setHex(0x1a1008);
@@ -8173,6 +8307,8 @@ function switchToMine() {
   document.getElementById('toolbar-wrap').style.display = '';
   // Hide blightbugs
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
+  // Hide town labels
+  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics].forEach(l => l.style.display = 'none');
   // Update scene buttons
   document.getElementById('btn-farm').classList.remove('active-scene');
   document.getElementById('btn-town').classList.remove('active-scene');
@@ -8740,6 +8876,75 @@ function tickMineCentipedes(dt, now) {
 }
 
 // ================================================================
+//  BARN SLEEP SYSTEM
+// ================================================================
+function openBarnSleep() {
+  if (barnSleepState !== 'none') return;
+  barnSleepState = 'prompt';
+  barnSleepMeshes.forEach(m => { m.material.transparent = true; m.material.opacity = 0.35; });
+  if (barnBedGroup) barnBedGroup.visible = true;
+  document.getElementById('sleep-bubble-prompt').style.display = 'block';
+}
+
+function closeBarnSleep() {
+  barnSleepState = 'none';
+  barnSleepMeshes.forEach(m => { m.material.opacity = 1.0; m.material.transparent = false; });
+  if (barnBedGroup) barnBedGroup.visible = false;
+  ['sleep-bubble-prompt','sleep-bubble-yes','sleep-bubble-no']
+    .forEach(id => { document.getElementById(id).style.display = 'none'; });
+}
+
+function doSleep() {
+  closeBarnSleep();
+  dayPhase = 0.11;
+  dayCount++;
+  document.getElementById('day').textContent = dayCount;
+  tickObstacleGrowth();
+  tickWeatherDay();
+  checkRoboticsUnlock();
+  mineLevel = 1;
+  if (mineTileGrid.length > 0) { generateMineLevel(mineLevel); initMineBats(); }
+  // Slept → full stamina
+  stamina = STAMINA_MAX;
+  _staminaExhausted = false;
+  _tiredWarningShown = false;
+  updateStaminaUI();
+  showTip('😴 You slept well! Ready for a new day! ☀️');
+  ensureAudio().then(() => sndSunrise());
+}
+
+// Wire up bubble clicks
+document.getElementById('sleep-bubble-prompt').addEventListener('click', () => {
+  if (barnSleepState !== 'prompt') return;
+  barnSleepState = 'confirm';
+  document.getElementById('sleep-bubble-yes').style.display = 'block';
+  document.getElementById('sleep-bubble-no').style.display  = 'block';
+});
+document.getElementById('sleep-bubble-yes').addEventListener('click', doSleep);
+document.getElementById('sleep-bubble-no').addEventListener('click', closeBarnSleep);
+
+// Update bubble screen positions every frame
+function updateSleepBubbles() {
+  if (barnSleepState === 'none' || currentView !== 'farm') return;
+  const proj = BARN_WORLD_POS.clone().project(camera);
+  const sx = (proj.x * 0.5 + 0.5) * window.innerWidth;
+  const sy = (1 - (proj.y * 0.5 + 0.5)) * window.innerHeight;
+
+  const prompt = document.getElementById('sleep-bubble-prompt');
+  prompt.style.left = sx + 'px';
+  prompt.style.top  = (sy - 18) + 'px';
+
+  if (barnSleepState === 'confirm') {
+    const yes = document.getElementById('sleep-bubble-yes');
+    const no  = document.getElementById('sleep-bubble-no');
+    yes.style.left = (sx - 44) + 'px';
+    yes.style.top  = (sy + 28) + 'px';
+    no.style.left  = (sx + 44) + 'px';
+    no.style.top   = (sy + 28) + 'px';
+  }
+}
+
+// ================================================================
 //  TOWN SCENE
 // ================================================================
 const townScene = new THREE.Scene();
@@ -9244,10 +9449,33 @@ function openRestaurant() {
       <button class="shop-buy-btn shop-sell-btn" onclick="sellCrops('${k}')">Sell All +${total}🪙</button>`;
     sellRows.appendChild(row);
   });
+  // Mushroom row
+  const mushCount = materials.mushroom;
+  if (mushCount > 0) {
+    any = true;
+    const mushTotal = mushCount * 4;
+    const mrow = document.createElement('div');
+    mrow.className = 'shop-row';
+    mrow.innerHTML = `<span>🍄 Mushrooms ×${mushCount}</span>
+      <button class="shop-buy-btn shop-sell-btn" onclick="sellMushrooms()">Sell All +${mushTotal}🪙</button>`;
+    sellRows.appendChild(mrow);
+  }
   if (!any) {
     sellRows.innerHTML = '<div style="color:#aaa;text-align:center;padding:12px 0">No crops to sell.<br><small>Go harvest first!</small></div>';
   }
   document.getElementById('restaurant-overlay').style.display = 'flex';
+}
+
+function sellMushrooms() {
+  const count = materials.mushroom;
+  if (!count) return;
+  const earned = count * 4;
+  gold += earned;
+  materials.mushroom = 0;
+  updateGoldUI();
+  document.getElementById('inv-mushroom').textContent = 0;
+  showTip(`💰 Sold ${count} mushrooms for +${earned}🪙!`);
+  openRestaurant();
 }
 
 function sellCrops(k) {
