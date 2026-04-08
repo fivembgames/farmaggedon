@@ -3139,20 +3139,23 @@ function makeDogHouseMesh() {
     post.position.set(x, y, z); g.add(post);
   });
 
-  // Roof panels
-  const roofL = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.07, 0.55), roofMat);
-  roofL.position.set(-0.01, 0.83, -0.22); roofL.rotation.z = 0.42; g.add(roofL);
-  const roofR = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.07, 0.55), roofMat);
-  roofR.position.set(-0.01, 0.83, 0.22); roofR.rotation.z = -0.42; g.add(roofR);
+  // Roof panels — ridge along X, slopes front and back
+  const roofFront = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.07, 0.55), roofMat);
+  roofFront.rotation.x = 0.44;
+  roofFront.position.set(0, 0.90, 0.25); g.add(roofFront);
+  const roofBack = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.07, 0.55), roofMat);
+  roofBack.rotation.x = -0.44;
+  roofBack.position.set(0, 0.90, -0.25); g.add(roofBack);
 
-  // Roof shingles (rows of small overlapping boxes)
+  // Roof shingles — rows from eave to ridge, columns along X
   for (let row = 0; row < 3; row++) {
     for (let col = 0; col < 5; col++) {
-      const sx = -0.36 + col * 0.18;
+      const sx = -0.36 + col * 0.18 + (row % 2 ? 0.09 : 0);
       [-1, 1].forEach(side => {
         const sh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.025, 0.15), shinMat);
-        sh.position.set(sx + (row % 2 ? 0.09 : 0), 0.82 + row * 0.04, side * (0.11 + row * 0.12));
-        sh.rotation.z = side * 0.42;
+        const t = (row + 0.5) / 3;
+        sh.position.set(sx, 0.79 + t * 0.23, side * 0.50 * (1 - t));
+        sh.rotation.x = side * 0.44;
         g.add(sh);
       });
     }
@@ -3160,7 +3163,7 @@ function makeDogHouseMesh() {
 
   // Ridge cap
   const ridge = new THREE.Mesh(new THREE.BoxGeometry(1.14, 0.05, 0.08), roofEdge);
-  ridge.position.y = 1.04; g.add(ridge);
+  ridge.position.y = 1.01; g.add(ridge);
 
   // Door arch (rounded entrance)
   const door = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.44, 0.04), darkMat);
