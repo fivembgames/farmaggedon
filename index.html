@@ -685,6 +685,28 @@
       </div>
     </div>
 
+    <div class="shop-section">
+      <h4>🦊 Fox Decoy</h4>
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:6px">
+        <span style="font-size:.82rem;color:#ccc;line-height:1.5">
+          A cardboard fox cutout. Place outside the farm to distract foxes. 50% chance to lure a fox away.
+        </span>
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between;margin-top:4px">
+          <span id="craft-fd-cost" style="font-size:.9rem">
+            🪙 Gold: <span id="craft-fd-gold">0</span>/50 &nbsp;
+            🟠 Copper: <span id="craft-fd-copper">0</span>/8 &nbsp;
+            ⚪ Silver: <span id="craft-fd-silver">0</span>/2
+          </span>
+          <button class="shop-buy-btn" id="craft-fd-btn" onclick="craftFoxDecoy()" style="background:rgba(160,80,20,.85)">
+            Craft 🦊
+          </button>
+        </div>
+        <div style="font-size:.78rem;color:#aaa">
+          Status: <span id="craft-fd-status">ready to craft</span>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -700,6 +722,24 @@
     <div class="shop-section">
       <h4>Sell Crops</h4>
       <div id="sell-rows"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Bakery Overlay -->
+<div class="shop-overlay" id="bakery-overlay">
+  <div class="shop-modal">
+    <button class="shop-close-btn" onclick="document.getElementById('bakery-overlay').style.display='none'">✕</button>
+    <div class="shop-title">🥐 The Golden Crust Bakery</div>
+    <div class="shop-section">
+      <h4>Menu</h4>
+      <div class="shop-row" id="bakery-coffee-row"></div>
+      <div class="shop-row" id="bakery-tea-row"></div>
+      <div class="shop-row" id="bakery-curry-row"></div>
+    </div>
+    <div class="shop-section">
+      <h4>Sell to Bakery</h4>
+      <div id="bakery-sell-rows"></div>
     </div>
   </div>
 </div>
@@ -956,11 +996,13 @@ camera.lookAt(GRID * 0.5, 0, GRID * 0.5 - 1);
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (placingScarecrow) cancelScarecrowPlacement();
+    if (placingFoxDecoy) cancelFoxDecoyPlacement();
     if (cameraFocusSelecting || cameraFocusActive) endCameraFocus();
   }
 });
 canvas.addEventListener('contextmenu', e => {
   if (placingScarecrow) { e.preventDefault(); cancelScarecrowPlacement(); }
+  if (placingFoxDecoy) { e.preventDefault(); cancelFoxDecoyPlacement(); }
 });
 
 window.addEventListener('resize', () => {
@@ -1353,9 +1395,9 @@ let WATER_MAX_CHARGES = 6;
 let waterCharges   = WATER_MAX_CHARGES;
 let currentTool    = TOOL.HOE;
 let selectedCrop   = 'wheat';
-let gold           = 600;
+let gold           = 800;
 let totalGoldSpent = 0;
-let _prevGoldTrack = 600;
+let _prevGoldTrack = 800;
 
 // ================================================================
 //  STAMINA
@@ -1366,6 +1408,12 @@ let _staminaExhausted = false; // guard: only trigger exhaust once per zero-hit
 let coffeesToday = 0;
 let coffeeOvercaffeinated = false;
 let _coffeeLastDay = 1;
+let teaToday = 0;
+let teaOvercaffeinated = false;
+let _teaLastDay = 1;
+let totalEggsHarvested = 0;
+let totalMilkCollected = 0;
+let bakeryUnlocked = false;
 
 // ---- Tool upgrade system ----
 // Upgradeable tools: hoe, axe, pickaxe, scythe
@@ -1462,6 +1510,7 @@ function onStaminaExhausted() {
   checkRoboticsUnlock();
   checkBlacksmithUnlock();
   checkUniversityUnlock();
+  checkBakeryUnlock();
   checkUpgradeCompletion();
 
   // Reset mine to floor 1
@@ -1482,6 +1531,9 @@ function onStaminaExhausted() {
   coffeeOvercaffeinated = false;
   coffeesToday = 0;
   _coffeeLastDay = dayCount;
+  teaOvercaffeinated = false;
+  teaToday = 0;
+  _teaLastDay = dayCount;
   _staminaExhausted = false;
   _tiredWarningShown = false;
   updateStaminaUI();
@@ -1522,10 +1574,13 @@ const BULL_SELL_PRICE  = 120;
 // Timings (ms)
 const COW_JUVENILE_MS  = 90000;  // 90s to become juvenile
 const COW_ADULT_MS     = 180000; // 180s to become adult
-const COW_EAT_INTERVAL = 30000;  // eat hay every 30s
-let hasCowBarn         = false;
-let cowBarnMesh        = null;
-const cows             = [];
+const COW_EAT_INTERVAL  = 30000;  // eat hay every 30s
+const COW_STARVE_MS     = COW_EAT_INTERVAL * 4; // 4 missed meals → death
+let hasCowBarn          = false;
+let cowBarnMesh         = null;
+const cows              = [];
+const tombstones        = [];
+let tombstoneCount      = 0;
 // Pig system
 const PIG_STY_PRICE    = 140;
 const PIG_PRICE        = 50;
@@ -1712,6 +1767,7 @@ function updateMaterialsUI() {
   document.getElementById('inv-copper').textContent = materials.copper;
   document.getElementById('inv-silver').textContent = materials.silver;
   document.getElementById('inv-gold').textContent   = materials.gold;
+  updateSiloFill();
 }
 
 function updateWaterChargesUI() {
@@ -2092,6 +2148,7 @@ function tickDayNight(dt) {
     checkRoboticsUnlock();
     checkBlacksmithUnlock();
     checkUniversityUnlock();
+    checkBakeryUnlock();
     checkUpgradeCompletion();
   }
 }
@@ -3229,8 +3286,8 @@ const DOG_HOUSE_Z     =   4.0;
 const DOG_ROAM_SPEED  =   0.022;
 const DOG_CHASE_SPEED =   0.038;
 const DOG_BARK_RANGE  =   6.0;   // detects crows/foxes within this range
-const DOG_FOX_SCARE_CHANCE = 0.25;  // 25% chance to scare fox away
-const DOG_FOX_BITE_CHANCE  = 0.15;  // 15% chance to bite = all foxes away 1 day
+const DOG_FOX_SCARE_CHANCE = 0.18;  // 18% chance to scare fox away
+const DOG_FOX_BITE_CHANCE  = 0.10;  // 10% chance to bite = all foxes away 1 day
 
 let dog             = null;
 let dogBannedUntilMs = -1;       // all foxes repelled until this timestamp
@@ -4652,6 +4709,8 @@ function collectEgg(pile) {
   setTimeout(() => { scene.remove(pile.mesh); }, 120);
   eggPiles.splice(idx, 1);
   materials.egg++;
+  totalEggsHarvested++;
+  checkBakeryUnlock();
   updateMaterialsUI();
   drainStamina(1);
   showTip('🥚 Collected an egg!');
@@ -5098,11 +5157,89 @@ function makeBullMesh() {
   return g;
 }
 
+function placeAnimalTombstone(animalType) {
+  const isBig = (animalType === 'cow' || animalType === 'bull');
+  const w = isBig ? 0.42 : 0.26;
+  const h = isBig ? 0.60 : 0.38;
+  const d = isBig ? 0.12 : 0.08;
+  const stoneMat = new THREE.MeshLambertMaterial({ color: 0x909090 });
+  const darkMat  = new THREE.MeshLambertMaterial({ color: 0x666666 });
+  const g = new THREE.Group();
+  // Slab
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stoneMat);
+  slab.position.set(0, h / 2, 0);
+  g.add(slab);
+  // Rounded arch top
+  const arch = new THREE.Mesh(new THREE.CylinderGeometry(w / 2, w / 2, d, 8, 1, false, 0, Math.PI), stoneMat);
+  arch.rotation.x = Math.PI / 2;
+  arch.rotation.z = Math.PI / 2;
+  arch.position.set(0, h, 0);
+  g.add(arch);
+  // RIP engraving (flat dark panel)
+  const engrave = new THREE.Mesh(new THREE.BoxGeometry(w * 0.6, h * 0.35, 0.01), darkMat);
+  engrave.position.set(0, h * 0.45, d / 2 + 0.006);
+  g.add(engrave);
+  // Place in top-left row, spacing out each one
+  const col = tombstoneCount;
+  g.position.set(col * (w + 0.15), 0, -1.1);
+  scene.add(g);
+  tombstones.push(g);
+  tombstoneCount++;
+}
+
+let siloGroup = null;
+let siloFillMesh = null;
+const SILO_MAX_HAY = 50;
+const SILO_HEIGHT  = 3.2;
+const SILO_RADIUS  = 0.55;
+
+function makeSiloMesh() {
+  const g = new THREE.Group();
+  // Outer shell — semi-transparent cylinder
+  const shellMat = new THREE.MeshLambertMaterial({ color: 0xbbbbbb, transparent: true, opacity: 0.30 });
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(SILO_RADIUS, SILO_RADIUS, SILO_HEIGHT, 16), shellMat);
+  shell.position.set(0, SILO_HEIGHT / 2, 0);
+  g.add(shell);
+  // Metal rings
+  const ringMat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+  [0.15, SILO_HEIGHT * 0.33, SILO_HEIGHT * 0.66, SILO_HEIGHT - 0.15].forEach(y => {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(SILO_RADIUS + 0.02, 0.03, 6, 16), ringMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, y, 0);
+    g.add(ring);
+  });
+  // Cone roof
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x666666 });
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(SILO_RADIUS + 0.08, 0.6, 16), roofMat);
+  roof.position.set(0, SILO_HEIGHT + 0.3, 0);
+  g.add(roof);
+  // Fill cylinder (light brown = hay inside)
+  const fillMat = new THREE.MeshLambertMaterial({ color: 0xccaa55 });
+  const fill = new THREE.Mesh(new THREE.CylinderGeometry(SILO_RADIUS - 0.06, SILO_RADIUS - 0.06, SILO_HEIGHT, 16), fillMat);
+  fill.position.set(0, SILO_HEIGHT / 2, 0);
+  g.add(fill);
+  siloFillMesh = fill;
+  return g;
+}
+
+function updateSiloFill() {
+  if (!siloFillMesh) return;
+  const pct = Math.min(materials.hay / SILO_MAX_HAY, 1);
+  const h = SILO_HEIGHT * pct;
+  siloFillMesh.scale.y = Math.max(pct, 0.001);
+  siloFillMesh.position.y = h / 2;
+}
+
 function placeCowBarn() {
   if (cowBarnMesh) return;
   cowBarnMesh = makeCowBarnMesh();
   cowBarnMesh.position.set(-3.2, 0, 4.5); // left side of farm, below incubator
   scene.add(cowBarnMesh);
+  // Place silo next to barn
+  siloGroup = makeSiloMesh();
+  siloGroup.position.set(-3.2 + 2.2, 0, 4.5 - 1.6);
+  scene.add(siloGroup);
+  updateSiloFill();
 }
 
 function spawnCow() {
@@ -5126,8 +5263,12 @@ function spawnCow() {
     returningToBarn: false,
     eatsSinceMilked: 0,
     needsMilking: false,
+    milkStartDay: 0,
     milkProgress: 0,
     milkClicksNeeded: 0,
+    milkBubble: null,
+    hunger: 0,
+    starvingStart: null,
   };
   cows.push(cow);
 }
@@ -5148,8 +5289,30 @@ function growCowToAdult(cow) {
     : '🐄 A calf grew up into a cow!');
 }
 
-// Find the nearest wild grass tile with segments and eat one segment
+// Cow eats 1 grass segment directly (does NOT add hay to inventory)
+function cowGrazeGrass(tile) {
+  const d = tile.userData;
+  if (d.obstacle !== OBS.GRASS || d.obsStage <= 0) return;
+  // Remove top segment visually
+  if (d.obsMesh) {
+    const topSeg = d.obsStage - 1;
+    const toRemove = [];
+    d.obsMesh.traverse(c => {
+      if (c.isMesh && c.userData.seg === topSeg) toRemove.push(c);
+    });
+    toRemove.forEach(c => { d.obsMesh.remove(c); c.geometry.dispose(); });
+  }
+  d.obsStage -= 1;
+  if (d.obsStage <= 0) {
+    if (d.obsMesh) { scene.remove(d.obsMesh); d.obsMesh = null; }
+    d.obstacle = null; d.obsStage = 0; d.obsHP = 0; d.obsGrowDay = 0; d.obsVariant = null;
+    d.obsDecomposed = false; d.decomposeDay = 0;
+  }
+}
+
+// Find the nearest wild grass tile and walk toward it; eat when close
 function cowEatWildGrass(cow) {
+  // Find nearest grass with segments
   let nearest = null, nearestDist = Infinity;
   for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
     const d = tileGrid[x][z].userData;
@@ -5158,14 +5321,13 @@ function cowEatWildGrass(cow) {
     if (dist < nearestDist) { nearestDist = dist; nearest = tileGrid[x][z]; }
   }
   if (nearest) {
-    // Move toward it; eat when close
     const tx = nearest.position.x, tz = nearest.position.z;
     const dx = tx - cow.mesh.position.x, dz = tz - cow.mesh.position.z;
     const dist = Math.hypot(dx, dz);
     const speed = cow.gender === 'bull' ? 0.018 : 0.014;
     if (dist < 0.5) {
-      // Eat one segment
-      hitGrass(nearest);
+      // Eat one segment (consumed by cow, not added to player inventory)
+      cowGrazeGrass(nearest);
       showTip('🐄 A cow grazed on wild grass!');
       return true;
     } else {
@@ -5186,11 +5348,15 @@ function milkCow(cow) {
   if (cow.milkProgress >= cow.milkClicksNeeded) {
     // Done milking
     materials.milk++;
+    totalMilkCollected++;
+    checkBakeryUnlock();
     updateMaterialsUI();
     cow.needsMilking     = false;
+    cow.milkStartDay     = 0;
     cow.eatsSinceMilked  = 0;
     cow.milkProgress     = 0;
     cow.milkClicksNeeded = 0;
+    if (cow.milkBubble) { cow.milkBubble.remove(); cow.milkBubble = null; }
     // Clear emissive
     cow.mesh.traverse(c => {
       if (c.isMesh && c.material.emissive) {
@@ -5242,6 +5408,19 @@ function tickCows(now) {
       continue; // skip normal AI at night
     }
 
+    // Hunger visual — red tint when starving
+    if (cow.starvingStart !== null) {
+      const pulse = 0.2 + Math.abs(Math.sin(now * 0.003)) * 0.4;
+      cow.mesh.traverse(c => {
+        if (c.isMesh && c.material.emissive) c.material.emissive.setHex(0x661100);
+        if (c.isMesh && c.material.emissiveIntensity !== undefined) c.material.emissiveIntensity = pulse;
+      });
+    } else if (cow.hunger === 0 && !cow.needsMilking) {
+      cow.mesh.traverse(c => {
+        if (c.isMesh && c.material.emissive) c.material.emissive.setHex(0x000000);
+      });
+    }
+
     // Milking pulse — only adult female cows that need milking
     if (cow.stage === 'adult' && cow.gender === 'cow' && cow.needsMilking) {
       const pulse = 0.3 + Math.abs(Math.sin(now * 0.004)) * 0.5;
@@ -5249,17 +5428,69 @@ function tickCows(now) {
         if (c.isMesh && c.material.emissive) c.material.emissive.setHex(0x004488);
         if (c.isMesh && c.material.emissiveIntensity !== undefined) c.material.emissiveIntensity = pulse;
       });
+
+      const milkDays = dayCount - cow.milkStartDay;
+
+      // After 4 days unmilked → death
+      if (milkDays >= 4) {
+        showTip('💀 A cow died from not being milked!');
+        scene.remove(cow.mesh);
+        if (cow.milkBubble) { cow.milkBubble.remove(); cow.milkBubble = null; }
+        placeAnimalTombstone('cow');
+        cows.splice(i, 1);
+        i--;
+        continue;
+      }
+
+      // After 2 days unmilked → show "milk me" bubble
+      if (milkDays >= 2 && !cow.milkBubble) {
+        const el = document.createElement('div');
+        el.className = 'town-label';
+        el.style.cssText = 'pointer-events:none;white-space:nowrap;font-size:13px;background:rgba(0,0,0,.7);padding:3px 8px;border-radius:8px;color:#ffe;';
+        el.textContent = '🐄 milk me!';
+        document.body.appendChild(el);
+        cow.milkBubble = el;
+        if (audioReady) sndMoo();
+      }
+
+      // Position bubble over cow
+      if (cow.milkBubble) {
+        const sc = worldToScreen(new THREE.Vector3(cow.mesh.position.x, 1.2, cow.mesh.position.z));
+        cow.milkBubble.style.left = sc.x + 'px';
+        cow.milkBubble.style.top  = sc.y + 'px';
+        cow.milkBubble.style.transform = 'translate(-50%,-100%)';
+        cow.milkBubble.style.display = currentView === 'farm' ? '' : 'none';
+      }
+    } else if (cow.milkBubble) {
+      // Milked — remove bubble
+      cow.milkBubble.remove();
+      cow.milkBubble = null;
+    }
+
+    // Starvation death check
+    if (cow.starvingStart !== null && now - cow.starvingStart >= COW_STARVE_MS) {
+      showTip('💀 A cow starved to death!');
+      scene.remove(cow.mesh);
+      placeAnimalTombstone(cow.gender || 'cow');
+      cows.splice(i, 1);
+      i--;
+      continue;
     }
 
     // Hay eating tick
     if (now > cow.eatTimer) {
-      cow.eatTimer = now + COW_EAT_INTERVAL + Math.random() * 8000;
       const result = cowEatWildGrass(cow);
+      if (result === false) {
+        // Still walking toward grass — don't reset timer, let it keep moving
+        continue;
+      }
+      // Reset timer after eating or failing
+      cow.eatTimer = now + COW_EAT_INTERVAL + Math.random() * 8000;
       let ate = false;
       if (result === true) {
         ate = true;
       } else if (result === null) {
-        // No wild grass — eat from hay stock if hungry
+        // No wild grass on the farm — eat from hay inventory
         if (materials.hay > 0) {
           materials.hay--;
           updateMaterialsUI();
@@ -5267,11 +5498,23 @@ function tickCows(now) {
           ate = true;
         }
       }
-      // Only adult female cows build up milk
-      if (ate && cow.stage === 'adult' && cow.gender === 'cow' && !cow.needsMilking) {
+      if (ate) {
+        cow.hunger = 0;
+        cow.starvingStart = null;
+      } else {
+        cow.hunger++;
+        if (cow.hunger === 2) showTip('🐄 A cow is hungry! Provide hay or grass.');
+        if (cow.hunger >= 3 && cow.starvingStart === null) {
+          cow.starvingStart = now;
+          showTip('⚠️ A cow is starving!');
+        }
+      }
+      // Only well-fed adult female cows build up milk
+      if (ate && cow.hunger === 0 && cow.stage === 'adult' && cow.gender === 'cow' && !cow.needsMilking) {
         cow.eatsSinceMilked++;
         if (cow.eatsSinceMilked >= 2) {
           cow.needsMilking = true;
+          cow.milkStartDay = dayCount;
           cow.milkProgress = 0;
           cow.milkClicksNeeded = 2 + Math.floor(Math.random() * 3); // 2-4 clicks
           sndMoo();
@@ -6094,6 +6337,130 @@ function makeScarecrowMesh(ghost) {
   return g;
 }
 
+// ================================================================
+//  FOX DECOY SYSTEM
+// ================================================================
+const FOX_DECOY_GOLD_COST   = 50;
+const FOX_DECOY_COPPER_COST = 8;
+const FOX_DECOY_SILVER_COST = 2;
+const FOX_DECOY_DISTRACT_CHANCE = 0.50;
+const foxDecoys = [];
+let placingFoxDecoy = false;
+let foxDecoyGhost   = null;
+
+function makeFoxDecoyMesh(ghost) {
+  const g = new THREE.Group();
+  const cardboardMat = new THREE.MeshLambertMaterial({
+    color: ghost ? 0x88ff88 : 0xc89050,
+    transparent: ghost,
+    opacity: ghost ? 0.45 : 1,
+    side: THREE.DoubleSide
+  });
+  const darkMat = new THREE.MeshLambertMaterial({
+    color: ghost ? 0x66cc66 : 0x884020,
+    transparent: ghost,
+    opacity: ghost ? 0.45 : 1,
+    side: THREE.DoubleSide
+  });
+  // Flat cardboard body silhouette (thin box)
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 0.04), cardboardMat);
+  body.position.set(0, 0.45, 0); g.add(body);
+  // Head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.35, 0.04), cardboardMat);
+  head.position.set(0.35, 0.85, 0); g.add(head);
+  // Pointed ears
+  const earMat = darkMat;
+  const earL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.22, 0.04), earMat);
+  earL.rotation.z = 0.3; earL.position.set(0.22, 1.12, 0); g.add(earL);
+  const earR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.22, 0.04), earMat);
+  earR.rotation.z = -0.3; earR.position.set(0.48, 1.12, 0); g.add(earR);
+  // Snout
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.05), darkMat);
+  snout.position.set(0.55, 0.78, 0); g.add(snout);
+  // Tail (angled flat piece)
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.04), cardboardMat);
+  tail.rotation.z = 0.5; tail.position.set(-0.55, 0.55, 0); g.add(tail);
+  // Tail tip
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.04), new THREE.MeshLambertMaterial({
+    color: ghost ? 0xccffcc : 0xfff5dd,
+    transparent: ghost, opacity: ghost ? 0.45 : 1, side: THREE.DoubleSide
+  }));
+  tip.position.set(-0.75, 0.72, 0); g.add(tip);
+  // Legs (two thin rectangles)
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.35, 0.04), darkMat);
+  legL.position.set(-0.2, 0.07, 0); g.add(legL);
+  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.35, 0.04), darkMat);
+  legR.position.set(0.2, 0.07, 0); g.add(legR);
+  // Support stick (behind, to hold it upright)
+  if (!ghost) {
+    const stick = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.9, 0.05), new THREE.MeshLambertMaterial({ color: 0x8B6530 }));
+    stick.rotation.x = -0.15;
+    stick.position.set(0, 0.35, -0.18); g.add(stick);
+  }
+  return g;
+}
+
+function craftFoxDecoy() {
+  if (gold < FOX_DECOY_GOLD_COST || materials.copper < FOX_DECOY_COPPER_COST || materials.silver < FOX_DECOY_SILVER_COST) {
+    showTip(`⚠️ Need ${FOX_DECOY_GOLD_COST}🪙, ${FOX_DECOY_COPPER_COST}🟠 copper, ${FOX_DECOY_SILVER_COST}⚪ silver`); return;
+  }
+  if (placingFoxDecoy) { showTip('⚠️ Already placing a fox decoy!'); return; }
+  gold -= FOX_DECOY_GOLD_COST;
+  materials.copper -= FOX_DECOY_COPPER_COST;
+  materials.silver -= FOX_DECOY_SILVER_COST;
+  updateGoldUI(); updateMaterialsUI();
+  placingFoxDecoy = true;
+  foxDecoyGhost = makeFoxDecoyMesh(true);
+  foxDecoyGhost.position.set(GRID + 2, 0, GRID / 2);
+  scene.add(foxDecoyGhost);
+  document.getElementById('crafting-overlay').style.display = 'none';
+  canvas.style.cursor = 'crosshair';
+  showTip('🦊 Fox Decoy crafted! Click OUTSIDE the farm to place it. ESC to cancel.');
+}
+
+function cancelFoxDecoyPlacement() {
+  if (!placingFoxDecoy) return;
+  placingFoxDecoy = false;
+  if (foxDecoyGhost) { scene.remove(foxDecoyGhost); foxDecoyGhost = null; }
+  canvas.style.cursor = 'default';
+  showTip('🦊 Fox decoy placement cancelled.');
+}
+
+function placeFoxDecoy(worldX, worldZ) {
+  // Must be outside the farm grid
+  if (worldX >= -0.5 && worldX <= GRID + 0.5 && worldZ >= -0.5 && worldZ <= GRID + 0.5) {
+    showTip('⚠️ Fox decoy must be placed OUTSIDE the farm!');
+    return;
+  }
+  const mesh = makeFoxDecoyMesh(false);
+  mesh.position.set(worldX, 0, worldZ);
+  scene.add(mesh);
+  foxDecoys.push({ mesh, wx: worldX, wz: worldZ });
+  scene.remove(foxDecoyGhost); foxDecoyGhost = null;
+  placingFoxDecoy = false;
+  canvas.style.cursor = 'default';
+  showTip('🦊 Fox decoy placed! Foxes have a 50% chance of being distracted.');
+}
+
+function checkFoxDecoyDistract(fox, now) {
+  if (foxDecoys.length === 0) return false;
+  // Find nearest decoy
+  let nearest = null, nearestDist = Infinity;
+  for (const dec of foxDecoys) {
+    const d = Math.hypot(dec.wx - fox.wx, dec.wz - fox.wz);
+    if (d < nearestDist) { nearestDist = d; nearest = dec; }
+  }
+  if (!nearest || nearestDist > 8) return false; // only if decoy within range
+  if (Math.random() >= FOX_DECOY_DISTRACT_CHANCE) return false;
+  // Distract! Set fox state to approach decoy
+  fox.state = 'distracted';
+  fox.decoyTarget = nearest;
+  fox.distractPhase = 'approach'; // 'approach' → 'hearts' → 'leave'
+  fox.heartTimer = 0;
+  fox.heartCount = 0;
+  return true;
+}
+
 function openCraftingMenu() {
   document.getElementById('craft-poop-have').textContent  = materials.poop;
   document.getElementById('craft-pm-have').textContent    = materials.plantMatter;
@@ -6115,6 +6482,18 @@ function openCraftingMenu() {
   scBtn.style.opacity = (canSC && !placingScarecrow) ? '1' : '0.45';
   document.getElementById('craft-sc-status').textContent = placingScarecrow
     ? '📍 click farm to place, ESC to cancel'
+    : 'ready to craft';
+
+  // Fox Decoy row
+  const fdBtn = document.getElementById('craft-fd-btn');
+  document.getElementById('craft-fd-gold').textContent   = gold;
+  document.getElementById('craft-fd-copper').textContent  = materials.copper;
+  document.getElementById('craft-fd-silver').textContent  = materials.silver;
+  const canFD = !placingFoxDecoy && gold >= FOX_DECOY_GOLD_COST && materials.copper >= FOX_DECOY_COPPER_COST && materials.silver >= FOX_DECOY_SILVER_COST;
+  fdBtn.disabled = !canFD;
+  fdBtn.style.opacity = canFD ? '1' : '0.45';
+  document.getElementById('craft-fd-status').textContent = placingFoxDecoy
+    ? '📍 click outside farm to place, ESC to cancel'
     : 'ready to craft';
 
   document.getElementById('crafting-overlay').style.display = 'flex';
@@ -6354,11 +6733,12 @@ function spawnFox(now) {
 function tickFoxes(now) {
   // Only unlock foxes 1 full day after first adult chicken
   if (firstAdultChickenTime < 0 || now - firstAdultChickenTime < DAY_DURATION) return;
-  // Dog bite: all foxes banned for 1 day
-  if (dogBannedUntilMs > 0 && now < dogBannedUntilMs) return;
+  // Dog bite: all foxes banned for 1 day (but still let them animate + flee)
+  const foxBanned = dogBannedUntilMs > 0 && now < dogBannedUntilMs;
   if (dogBannedUntilMs > 0 && now >= dogBannedUntilMs) dogBannedUntilMs = -1;
 
-  if (foxes.length < FOX_MAX && now - lastFoxSpawnMs > nextFoxDelayMs) {
+  // Don't spawn new foxes during ban
+  if (!foxBanned && foxes.length < FOX_MAX && now - lastFoxSpawnMs > nextFoxDelayMs) {
     spawnFox(now);
     lastFoxSpawnMs  = now;
     nextFoxDelayMs  = FOX_SPAWN_MIN_MS + Math.random() * (FOX_SPAWN_MAX_MS - FOX_SPAWN_MIN_MS);
@@ -6401,6 +6781,67 @@ function tickFoxes(now) {
     const tail = fox.mesh.getObjectByName('foxTail');
     if (tail) tail.rotation.z = -0.45 + Math.sin(fox.bobT * 1.1) * 0.18;
 
+    // --- State: distracted by decoy ---
+    if (fox.state === 'distracted') {
+      const dec = fox.decoyTarget;
+      if (fox.distractPhase === 'approach') {
+        const dx = dec.wx - fox.wx, dz = dec.wz - fox.wz;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 0.5) {
+          fox.wx += (dx / dist) * FOX_STALK_SPEED;
+          fox.wz += (dz / dist) * FOX_STALK_SPEED;
+          fox.mesh.position.x = fox.wx;
+          fox.mesh.position.z = fox.wz;
+          fox.mesh.rotation.y = Math.atan2(dx, dz);
+        } else {
+          // Face the decoy
+          fox.mesh.rotation.y = Math.atan2(dx, dz);
+          fox.distractPhase = 'hearts';
+          fox.heartTimer = now;
+          fox.heartCount = 0;
+        }
+      } else if (fox.distractPhase === 'hearts') {
+        // Spawn heart emojis every 600ms, 5 total
+        if (fox.heartCount < 5 && now - fox.heartTimer > 600) {
+          fox.heartTimer = now;
+          fox.heartCount++;
+          const heart = document.createElement('div');
+          heart.textContent = '❤️';
+          heart.style.cssText = 'position:fixed;font-size:18px;pointer-events:none;z-index:100;transition:all 1.2s ease-out;';
+          const sc = worldToScreen(new THREE.Vector3(fox.wx, 0.8, fox.wz));
+          heart.style.left = (sc.x - 10 + (Math.random() - 0.5) * 20) + 'px';
+          heart.style.top  = sc.y + 'px';
+          document.body.appendChild(heart);
+          requestAnimationFrame(() => {
+            heart.style.top  = (sc.y - 50 - Math.random() * 30) + 'px';
+            heart.style.opacity = '0';
+          });
+          setTimeout(() => heart.remove(), 1400);
+        }
+        if (fox.heartCount >= 5 && now - fox.heartTimer > 600) {
+          fox.distractPhase = 'leave';
+          const exit = foxOffscreenPoint(fox.wx, fox.wz);
+          fox.targetX = exit.x; fox.targetZ = exit.z;
+        }
+      } else if (fox.distractPhase === 'leave') {
+        const dx = fox.targetX - fox.wx, dz = fox.targetZ - fox.wz;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 0.3) {
+          fox.wx += (dx / dist) * FOX_SKULK_SPEED;
+          fox.wz += (dz / dist) * FOX_SKULK_SPEED;
+          fox.mesh.position.x = fox.wx;
+          fox.mesh.position.z = fox.wz;
+          fox.mesh.rotation.y = Math.atan2(dx, dz);
+        } else {
+          fox.offscreen = true;
+          fox.offscreenUntil = now + 40000 + Math.random() * 30000;
+          fox.mesh.visible = false;
+          showTip('🦊 A fox was distracted by the decoy!', false);
+        }
+      }
+      continue;
+    }
+
     // --- State: eating ---
     if (fox.state === 'eating') {
       if (now > fox.eatUntil) {
@@ -6431,15 +6872,21 @@ function tickFoxes(now) {
       continue;
     }
 
-    // --- Look for nearest adult chicken ---
+    // --- Look for nearest adult chicken (skip during dog ban) ---
     let nearestChicken = null, nearestDist = FOX_DETECT_RANGE;
-    for (const ch of chickens) {
-      if (ch.stage !== 'adult') continue;
-      const d = Math.hypot(ch.mesh.position.x - fox.wx, ch.mesh.position.z - fox.wz);
-      if (d < nearestDist) { nearestDist = d; nearestChicken = ch; }
+    if (!foxBanned) {
+      for (const ch of chickens) {
+        if (ch.stage !== 'adult') continue;
+        const d = Math.hypot(ch.mesh.position.x - fox.wx, ch.mesh.position.z - fox.wz);
+        if (d < nearestDist) { nearestDist = d; nearestChicken = ch; }
+      }
     }
 
     if (nearestChicken) {
+      // Fox decoy distraction check — only when first targeting
+      if (fox.state === 'skulking' && checkFoxDecoyDistract(fox, now)) {
+        continue;
+      }
       const tx = nearestChicken.mesh.position.x;
       const tz = nearestChicken.mesh.position.z;
       const dx = tx - fox.wx, dz = tz - fox.wz;
@@ -7305,6 +7752,9 @@ function spawnAutoMower() {
     tilesMowed: 0,
     rechargingUntil: -1,
     speed: 0.020,
+    homeX: startX, homeZ: startZ,
+    eligibleThisPass: false,
+    returningHome: false,
   };
   autoMowerSetLights(autoMower, 0);
 }
@@ -7330,6 +7780,27 @@ function tickAutoMower(now) {
 
   if (am.mode === 0) return; // parked
 
+  // Returning home — no eligible tiles found on last pass
+  if (am.returningHome) {
+    const hdx = am.homeX - am.wx;
+    const hdz = am.homeZ - am.wz;
+    const hdist = Math.hypot(hdx, hdz);
+    if (hdist > 0.08) {
+      am.wx += (hdx / hdist) * am.speed;
+      am.wz += (hdz / hdist) * am.speed;
+      am.mesh.rotation.y = Math.atan2(hdx, hdz);
+    } else {
+      am.wx = am.homeX; am.wz = am.homeZ;
+      am.returningHome = false;
+      am.mode = 0;
+      autoMowerSetLights(am, 0);
+      showTip('🚜 AutoMower parked — nothing to mow.', false);
+    }
+    am.mesh.position.x = am.wx;
+    am.mesh.position.z = am.wz;
+    return;
+  }
+
   // Move toward current path waypoint
   const wp = am.path[am.pathIdx];
   const targetX = wp.x + 0.5;
@@ -7349,8 +7820,9 @@ function tickAutoMower(now) {
     if (tile) {
       const d = tile.userData;
       if (d.obstacle === OBS.GRASS) {
-        const shouldMow = (am.mode === 2) || (am.mode === 1 && d.obsDecomposed);
-        if (shouldMow) {
+        const isEligible = (am.mode === 2) || (am.mode === 1 && d.obsDecomposed);
+        if (isEligible) {
+          am.eligibleThisPass = true;
           const wasDecomp = d.obsDecomposed;
           const segs = d.obsStage;
           mowerClearGrass(tile);
@@ -7364,7 +7836,14 @@ function tickAutoMower(now) {
     // Advance to next waypoint
     am.pathIdx++;
     if (am.pathIdx >= am.path.length) {
-      am.pathIdx = 0; // wrap for next pass
+      if (!am.eligibleThisPass) {
+        // Nothing to mow — head home and park
+        am.returningHome = true;
+        am.pathIdx = 0;
+      } else {
+        am.pathIdx = 0; // wrap for next pass
+        am.eligibleThisPass = false;
+      }
     }
     // Check battery
     if (am.tilesMowed >= AUTOMOWER_CAPACITY) {
@@ -7495,6 +7974,15 @@ canvas.addEventListener('click', async e => {
     const onFarm = pos.x >= -0.5 && pos.x <= GRID + 0.5 && pos.z >= -0.5 && pos.z <= GRID + 0.5;
     if (!onFarm) { showTip('⚠️ Place the scarecrow on the farm!'); return; }
     placeScarecrow(pos.x, pos.z);
+    return;
+  }
+
+  // Fox decoy placement mode
+  if (placingFoxDecoy) {
+    if (e.button !== 0) { cancelFoxDecoyPlacement(); return; }
+    const pos = worldPosFromMouse(e);
+    if (!pos) { cancelFoxDecoyPlacement(); return; }
+    placeFoxDecoy(pos.x, pos.z);
     return;
   }
 
@@ -7696,6 +8184,17 @@ canvas.addEventListener('mousemove', e => {
     return;
   }
 
+  // Fox decoy ghost follows cursor
+  if (placingFoxDecoy && foxDecoyGhost) {
+    const pos = worldPosFromMouse(e);
+    if (pos) {
+      foxDecoyGhost.position.x = pos.x;
+      foxDecoyGhost.position.z = pos.z;
+    }
+    canvas.style.cursor = 'crosshair';
+    return;
+  }
+
   const r2 = canvas.getBoundingClientRect();
   mouse.x = ((e.clientX - r2.left) / r2.width)  *  2 - 1;
   mouse.y = ((e.clientY - r2.top)  / r2.height) * -2 + 1;
@@ -7811,7 +8310,8 @@ function animate(now) {
   const _savedCamX = camera.position.x;
   const _savedCamY = camera.position.y;
   const _savedCamZ = camera.position.z;
-  if (coffeeOvercaffeinated) {
+  const _isShaking = coffeeOvercaffeinated || teaOvercaffeinated;
+  if (_isShaking) {
     const shakeAmt = 0.07;
     camera.position.x += (Math.random() - 0.5) * shakeAmt;
     camera.position.y += (Math.random() - 0.5) * shakeAmt * 0.5;
@@ -7828,7 +8328,7 @@ function animate(now) {
     renderer.render(townScene, camera);
   }
 
-  if (coffeeOvercaffeinated) {
+  if (_isShaking) {
     camera.position.set(_savedCamX, _savedCamY, _savedCamZ);
   }
 }
@@ -8548,7 +9048,7 @@ function switchToMine() {
   // Hide blightbugs
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
   // Hide town labels
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
+  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
   // Update scene buttons
   document.getElementById('btn-farm').classList.remove('active-scene');
   document.getElementById('btn-town').classList.remove('active-scene');
@@ -9148,6 +9648,7 @@ function doSleep() {
   checkRoboticsUnlock();
   checkBlacksmithUnlock();
   checkUniversityUnlock();
+  checkBakeryUnlock();
   checkUpgradeCompletion();
   mineLevel = 1;
   closeRopeBubbles();
@@ -9159,6 +9660,9 @@ function doSleep() {
   coffeeOvercaffeinated = false;
   coffeesToday = 0;
   _coffeeLastDay = dayCount;
+  teaOvercaffeinated = false;
+  teaToday = 0;
+  _teaLastDay = dayCount;
   _staminaExhausted = false;
   _tiredWarningShown = false;
   updateStaminaUI();
@@ -9544,6 +10048,69 @@ const restaurantMeshes = [];
   townScene.add(grp);
 })();
 
+// ---- Bakery (attached to right side of restaurant) ----
+let bakeryConstrGrp = null;
+let bakeryBuiltGrp  = null;
+const bakeryMeshes  = [];
+(function() {
+  // --- Construction scaffold ---
+  const cGrp    = new THREE.Group();
+  const beamMat = new THREE.MeshLambertMaterial({ color: 0x9B6930 });
+  const signMat = new THREE.MeshLambertMaterial({ color: 0xFFCC00 });
+  [[-1.2,-1.6],[1.2,-1.6],[-1.2,1.6],[1.2,1.6]].forEach(([x,z]) => {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.14, 3.5, 0.14), beamMat);
+    p.position.set(x, 1.75, z); cGrp.add(p);
+  });
+  const hBar = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, 0.12), beamMat);
+  hBar.position.set(0, 3.3, -1.6); cGrp.add(hBar);
+  const hBar2 = hBar.clone(); hBar2.position.set(0, 3.3, 1.6); cGrp.add(hBar2);
+  const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 3.4), beamMat);
+  vBar.position.set(-1.2, 3.3, 0); cGrp.add(vBar);
+  const vBar2 = vBar.clone(); vBar2.position.set(1.2, 3.3, 0); cGrp.add(vBar2);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 0.1), signMat);
+  sign.position.set(0, 2.0, -1.65); cGrp.add(sign);
+  cGrp.position.set(14.0, 0, 0);
+  townScene.add(cGrp);
+  bakeryConstrGrp = cGrp;
+
+  // --- Built bakery ---
+  const bGrp    = new THREE.Group();
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0xfdf0c8 }); // warm cream
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0xcc5522 }); // terra cotta
+  const doorMat = new THREE.MeshLambertMaterial({ color: 0x7a4010 });
+  const winMat  = new THREE.MeshLambertMaterial({ color: 0xffeebb });
+  const trimMat = new THREE.MeshLambertMaterial({ color: 0xe8c87a });
+  // Body
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.7, 2.8, 4.5), wallMat);
+  body.position.set(0, 1.4, 0); bGrp.add(body);
+  // Flat roof slab
+  const roofSlab = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.28, 5.0), roofMat);
+  roofSlab.position.set(0, 2.94, 0); bGrp.add(roofSlab);
+  // Small gabled peak
+  const peak = new THREE.Mesh(new THREE.CylinderGeometry(0, 1.7, 0.9, 4), roofMat);
+  peak.rotation.y = Math.PI / 4; peak.position.set(0, 3.48, 0); bGrp.add(peak);
+  // Sign board
+  const signBrd = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.55, 0.14), trimMat);
+  signBrd.position.set(0, 2.4, 2.35); bGrp.add(signBrd);
+  // Door
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.75, 1.8, 0.12), doorMat);
+  door.position.set(0, 0.9, 2.35); bGrp.add(door);
+  // Windows
+  [-0.9, 0.9].forEach(x => {
+    const w = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.10), winMat);
+    w.position.set(x, 1.75, 2.35); bGrp.add(w);
+  });
+  // Shared wall trim (left side joins restaurant)
+  const jTrim = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.8, 4.5), trimMat);
+  jTrim.position.set(-1.39, 1.4, 0); bGrp.add(jTrim);
+
+  bGrp.traverse(m => { if (m.isMesh) { m.userData.building = 'bakery'; bakeryMeshes.push(m); } });
+  bGrp.position.set(14.0, 0, 0);
+  bGrp.visible = false;
+  townScene.add(bGrp);
+  bakeryBuiltGrp = bGrp;
+})();
+
 // ---- Animal Shop (south of supply store) ----
 const animalMeshes = [];
 (function() {
@@ -9787,6 +10354,7 @@ function makeTownLabel(text, id) {
 }
 const lblSupply     = makeTownLabel('🌾 Supply Store', 'lbl-supply');
 const lblRestaurant = makeTownLabel('🍽️ Restaurant', 'lbl-restaurant');
+const lblBakery     = makeTownLabel('🥐 Under Construction', 'lbl-bakery');
 const lblChurch     = makeTownLabel('⛪ Church', 'lbl-church');
 const lblAnimal     = makeTownLabel('🐔 Animal Shop', 'lbl-animal');
 const lblRobotics     = makeTownLabel('🔧 Under Construction', 'lbl-robotics');
@@ -9795,6 +10363,7 @@ const lblUniversity   = makeTownLabel('🏛️ Under Construction', 'lbl-univers
 const TOWN_WORLD_LABELS = [
   { el: lblSupply,     pos: new THREE.Vector3(-10, 5, 0) },
   { el: lblRestaurant, pos: new THREE.Vector3( 10, 5, 0) },
+  { el: lblBakery,     pos: new THREE.Vector3( 14, 4.5, 0) },
   { el: lblChurch,     pos: new THREE.Vector3(  0, 4.5,-10) },
   { el: lblAnimal,     pos: new THREE.Vector3(-10, 5, 8) },
   { el: lblRobotics,   pos: new THREE.Vector3(  0, 5, 8) },
@@ -9851,13 +10420,17 @@ function switchToTown() {
   if (incubatorMesh) incubatorMesh.visible = false;
   if (chickenCoopMesh) chickenCoopMesh.visible = false;
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'block');
+  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'block');
   if (roboSweeper) roboSweeper.mesh.visible = false;
   if (eggcavator) eggcavator.mesh.visible = false;
   if (autoMower) autoMower.mesh.visible = false;
   scarecrows.forEach(sc => { sc.mesh.visible = false; });
+  foxDecoys.forEach(fd => { fd.mesh.visible = false; });
+  if (siloGroup) siloGroup.visible = false;
+  cows.forEach(c => { if (c.milkBubble) c.milkBubble.style.display = 'none'; });
   if (dog) { dog.mesh.visible = false; dog.houseMesh.visible = false; if (dog.barkBubble) dog.barkBubble.style.display = 'none'; }
   if (placingScarecrow) cancelScarecrowPlacement();
+  if (placingFoxDecoy) cancelFoxDecoyPlacement();
   document.getElementById('btn-farm').classList.remove('active-scene');
   document.getElementById('btn-town').classList.add('active-scene');
   showTip('🏘️ Click a building to enter!', false);
@@ -9891,14 +10464,17 @@ function switchToFarm() {
   if (chickenCoopMesh) chickenCoopMesh.visible = true;
   updateHopperHUD();
   blightBugs.forEach(b => { b.el.style.visibility = ''; });
-  [lblSupply, lblRestaurant, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
+  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
   if (roboSweeper) roboSweeper.mesh.visible = true;
   if (eggcavator) eggcavator.mesh.visible = true;
   if (autoMower) autoMower.mesh.visible = true;
   scarecrows.forEach(sc => { sc.mesh.visible = true; });
+  foxDecoys.forEach(fd => { fd.mesh.visible = true; });
+  if (siloGroup) siloGroup.visible = true;
   if (dog) { dog.mesh.visible = true; dog.houseMesh.visible = true; }
   document.getElementById('supply-overlay').style.display = 'none';
   document.getElementById('restaurant-overlay').style.display = 'none';
+  document.getElementById('bakery-overlay').style.display = 'none';
   document.getElementById('animal-overlay').style.display = 'none';
   document.getElementById('robotics-overlay').style.display = 'none';
   document.getElementById('church-overlay').style.display = 'none';
@@ -10088,6 +10664,124 @@ function sellCrops(k) {
   showTip(`💰 Sold ${count} ${CROPS[k].name} for +${earned}🪙!`);
   openRestaurant();
   checkRoboticsUnlock();
+}
+
+// ================================================================
+//  BAKERY
+// ================================================================
+const COFFEE_BAKERY_PRICE  = 8;   // same as restaurant
+const TEA_PRICE            = 4;
+const CURRY_PUFF_PRICE     = 25;
+const TEA_STAMINA          = Math.floor(STAMINA_MAX * 0.10);
+const CURRY_PUFF_STAMINA   = Math.floor(STAMINA_MAX * 0.50);
+const BAKERY_EGG_PRICE     = 6;
+const BAKERY_MILK_PRICE    = 10;
+const BAKERY_HONEY_PRICE   = 14;
+
+function checkBakeryUnlock() {
+  if (bakeryUnlocked) return;
+  if (totalEggsHarvested < 4 || totalMilkCollected < 2) return;
+  bakeryUnlocked = true;
+  if (bakeryConstrGrp) bakeryConstrGrp.visible = false;
+  if (bakeryBuiltGrp)  bakeryBuiltGrp.visible  = true;
+  lblBakery.textContent = '🥐 Bakery';
+  showTip('🥐 The Golden Crust Bakery is now open!');
+}
+
+function openBakery() {
+  if (!bakeryUnlocked) { showTip('🥐 Bakery still under construction!'); return; }
+
+  // Coffee row (same as restaurant)
+  const coffeeRow = document.getElementById('bakery-coffee-row');
+  coffeeRow.innerHTML = `<span>☕ Coffee — restores 25% stamina</span>
+    <button class="shop-buy-btn" onclick="buyCoffee(); openBakery()">Buy ${COFFEE_BAKERY_PRICE}🪙</button>`;
+
+  // Tea row
+  const teaRow = document.getElementById('bakery-tea-row');
+  const teaWarning = teaToday >= 7 ? ' <small style="color:#ffaa44">(⚠️ 1 more may overstimulate!)</small>' : '';
+  teaRow.innerHTML = `<span>🍵 Tea — restores 10% stamina${teaWarning}</span>
+    <button class="shop-buy-btn" onclick="buyTea()">Buy ${TEA_PRICE}🪙</button>`;
+
+  // Curry puff row
+  const curryRow = document.getElementById('bakery-curry-row');
+  curryRow.innerHTML = `<span>🥟 Curry Puff Pastry — restores 50% stamina</span>
+    <button class="shop-buy-btn" onclick="buyCurryPuff()">Buy ${CURRY_PUFF_PRICE}🪙</button>`;
+
+  // Sell rows
+  const sellRows = document.getElementById('bakery-sell-rows');
+  sellRows.innerHTML = '';
+  let any = false;
+
+  if (materials.egg > 0) {
+    any = true;
+    const total = materials.egg * BAKERY_EGG_PRICE;
+    const row = document.createElement('div'); row.className = 'shop-row';
+    row.innerHTML = `<span>🥚 Eggs ×${materials.egg}</span>
+      <button class="shop-buy-btn shop-sell-btn" onclick="sellToBakery('egg')">Sell All +${total}🪙</button>`;
+    sellRows.appendChild(row);
+  }
+  if (materials.milk > 0) {
+    any = true;
+    const total = materials.milk * BAKERY_MILK_PRICE;
+    const row = document.createElement('div'); row.className = 'shop-row';
+    row.innerHTML = `<span>🥛 Milk ×${materials.milk}</span>
+      <button class="shop-buy-btn shop-sell-btn" onclick="sellToBakery('milk')">Sell All +${total}🪙</button>`;
+    sellRows.appendChild(row);
+  }
+  if (materials.honey > 0) {
+    any = true;
+    const total = materials.honey * BAKERY_HONEY_PRICE;
+    const row = document.createElement('div'); row.className = 'shop-row';
+    row.innerHTML = `<span>🍯 Honey ×${materials.honey}</span>
+      <button class="shop-buy-btn shop-sell-btn" onclick="sellToBakery('honey')">Sell All +${total}🪙</button>`;
+    sellRows.appendChild(row);
+  }
+  if (!any) {
+    sellRows.innerHTML = '<div style="color:#aaa;text-align:center;padding:12px 0">Nothing to sell.<br><small>Collect eggs, milk, or honey!</small></div>';
+  }
+
+  document.getElementById('bakery-overlay').style.display = 'flex';
+}
+
+function buyTea() {
+  if (gold < TEA_PRICE) { showTip('⚠️ Not enough gold! Need ' + TEA_PRICE + '🪙'); return; }
+  if (dayCount !== _teaLastDay) { teaToday = 0; _teaLastDay = dayCount; }
+  gold -= TEA_PRICE;
+  stamina = Math.min(STAMINA_MAX, stamina + TEA_STAMINA);
+  teaToday++;
+  updateGoldUI();
+  updateStaminaUI();
+  if (teaToday >= 8 && !teaOvercaffeinated) {
+    teaOvercaffeinated = true;
+    showTip('🍵🍵🍵🍵🍵🍵🍵🍵 Too much tea! Your hands are trembling!');
+  } else {
+    showTip('🍵 Tea! +10% stamina' + (teaToday === 7 ? ' (one more and you may regret it…)' : ''));
+  }
+  openBakery();
+}
+
+function buyCurryPuff() {
+  if (gold < CURRY_PUFF_PRICE) { showTip('⚠️ Not enough gold! Need ' + CURRY_PUFF_PRICE + '🪙'); return; }
+  gold -= CURRY_PUFF_PRICE;
+  stamina = Math.min(STAMINA_MAX, stamina + CURRY_PUFF_STAMINA);
+  updateGoldUI();
+  updateStaminaUI();
+  showTip('🥟 Curry Puff Pastry! +50% stamina');
+  openBakery();
+}
+
+function sellToBakery(mat) {
+  const prices = { egg: BAKERY_EGG_PRICE, milk: BAKERY_MILK_PRICE, honey: BAKERY_HONEY_PRICE };
+  const emojis = { egg: '🥚', milk: '🥛', honey: '🍯' };
+  const count = materials[mat];
+  if (!count) return;
+  const earned = count * prices[mat];
+  gold += earned;
+  materials[mat] = 0;
+  updateGoldUI();
+  updateMaterialsUI();
+  showTip(`💰 Sold ${count} ${emojis[mat]} for +${earned}🪙!`);
+  openBakery();
 }
 
 const HEN_SELL_PRICE     = 40;
@@ -10498,15 +11192,7 @@ function renderBioTree() {
       aromaCost, aroma, aromaCan, true) + '</div>';
     html += '</div>';
   } else {
-    html += '<div style="text-align:center;height:18px"><div style="width:2px;height:18px;background:#333;margin:0 auto"></div></div>';
-    html += '<div class="uni-tree-branch">';
-    html += '<div>' + card('tillWorms', '🪱 Till Worms',
-      '30% chance to deter blight bugs from blighting soil.',
-      wormsCost, false, false, false) + '</div>';
-    html += '<div>' + card('aromatics', '🌸 Aromatics',
-      '30% chance to reset grasshopper/blight eating timer.',
-      aromaCost, false, false, false) + '</div>';
-    html += '</div>';
+    html += '<div style="text-align:center;color:#555;font-size:.75rem;margin-top:6px">🔒 Further research locked — unlock Microbiology first</div>';
   }
 
   panel.innerHTML = html;
@@ -10798,6 +11484,7 @@ canvas.addEventListener('click', e => {
   // Close modals on backdrop click
   if (document.getElementById('supply-overlay').style.display === 'flex' ||
       document.getElementById('restaurant-overlay').style.display === 'flex' ||
+      document.getElementById('bakery-overlay').style.display === 'flex' ||
       document.getElementById('animal-overlay').style.display === 'flex' ||
       document.getElementById('robotics-overlay').style.display === 'flex' ||
       document.getElementById('church-overlay').style.display === 'flex' ||
@@ -10817,6 +11504,7 @@ canvas.addEventListener('click', e => {
   if (bld === 'church')      openChurch();
   if (bld === 'blacksmith')  openBlacksmith();
   if (bld === 'university')  openUniversity();
+  if (bld === 'bakery')      openBakery();
 });
 
 // Town label hover feedback
@@ -10826,7 +11514,7 @@ canvas.addEventListener('mousemove', e => {
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
   townRaycaster.setFromCamera({ x: mx, y: my }, camera);
-  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...churchMeshes, ...blacksmithMeshes, ...universityMeshes], false);
+  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...bakeryMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...churchMeshes, ...blacksmithMeshes, ...universityMeshes], false);
   canvas.style.cursor = hits.length ? 'pointer' : 'default';
 });
 
@@ -10871,13 +11559,21 @@ canvas.addEventListener('mousemove', e => {
 
   canvas.addEventListener('touchmove', e => {
     e.preventDefault();
-    // Update scarecrow ghost position on touch drag
+    // Update scarecrow/fox decoy ghost position on touch drag
     if (placingScarecrow && scarecrowGhost) {
       const fake = touchToMouse(e);
       const pos = worldPosFromMouse(fake);
       if (pos) {
         scarecrowGhost.position.x = pos.x;
         scarecrowGhost.position.z = pos.z;
+      }
+    }
+    if (placingFoxDecoy && foxDecoyGhost) {
+      const fake = touchToMouse(e);
+      const pos = worldPosFromMouse(fake);
+      if (pos) {
+        foxDecoyGhost.position.x = pos.x;
+        foxDecoyGhost.position.z = pos.z;
       }
     }
   }, { passive: false });
