@@ -130,6 +130,36 @@
     .tool-wrap { display: flex; flex-direction: column; align-items: center; }
     .tool-label { font-size: .62rem; color: #ddd; margin-top: 2px; letter-spacing: .02em; }
 
+    /* ---- BACKPACK ---- */
+    #backpack-btn {
+      position: fixed; bottom: 28px; right: 20px;
+      width: 52px; height: 52px; font-size: 1.7rem;
+      background: rgba(0,0,0,.65); border: 3px solid rgba(255,215,0,.5);
+      border-radius: 50%; cursor: pointer; z-index: 30;
+      display: none; align-items: center; justify-content: center;
+      transition: transform .15s, border-color .15s;
+      box-shadow: 0 3px 14px rgba(0,0,0,.5);
+    }
+    #backpack-btn:hover { transform: scale(1.12); border-color: #FFD700; }
+    #backpack-overlay {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,.55); z-index: 180;
+      align-items: center; justify-content: center;
+    }
+    #backpack-panel {
+      background: rgba(20,15,8,.95); border: 2px solid #AA8844;
+      border-radius: 14px; padding: 18px 24px; min-width: 220px;
+      color: #fff; font-family: monospace; text-align: center;
+    }
+    .bp-slot {
+      display: inline-flex; width: 48px; height: 48px; margin: 4px;
+      border: 2px solid rgba(255,255,255,.2); border-radius: 10px;
+      background: rgba(255,255,255,.06); align-items: center; justify-content: center;
+      font-size: 1.5rem; cursor: pointer; transition: border-color .15s, background .15s;
+    }
+    .bp-slot:hover { border-color: #FFD700; background: rgba(255,215,0,.12); }
+    .bp-slot.empty { cursor: default; opacity: .4; }
+
     /* ---- NIGHT OVERLAY ---- */
     #night-overlay {
       position: fixed; inset: 0; background: rgba(0,5,30,0);
@@ -385,7 +415,7 @@
       text-shadow: 0 1px 3px rgba(0,0,0,.8);
     }
     #stamina-track {
-      width: 12px; height: 90px;
+      width: 12px; height: 135px;
       background: rgba(0,0,0,.55); border-radius: 6px;
       border: 1px solid rgba(255,255,255,.18);
       overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
@@ -399,7 +429,7 @@
 
     @media (max-width: 768px) {
       #stamina-wrap { bottom: 76px; left: 8px; }
-      #stamina-track { width: 10px; height: 70px; }
+      #stamina-track { width: 10px; height: 105px; }
     }
 
     /* ---- SLEEP BUBBLES ---- */
@@ -444,7 +474,7 @@
       100% { opacity: 0; }
     }
     #tired-emoji {
-      font-size: 5rem; line-height: 1;
+      font-size: 6.2rem; line-height: 1;
       filter: drop-shadow(0 0 18px rgba(0,0,0,.6));
     }
     #tired-text {
@@ -780,6 +810,7 @@
     <div class="shop-section">
       <div class="shop-row" id="tithe-row"></div>
       <div id="tithe-info" style="color:#aaa;text-align:center;padding:4px 0;font-size:.82rem"></div>
+      <div class="shop-row" id="pray-row"></div>
     </div>
   </div>
 </div>
@@ -881,6 +912,14 @@
       <button class="tool-btn" data-tool="fertilize">🌿</button>
       <span class="tool-label">Fertilize <span id="fertilizer-count">0</span></span>
     </div>
+  </div>
+</div>
+<button id="backpack-btn" onclick="openBackpack()">🎒</button>
+<div id="backpack-overlay" onclick="if(event.target===this)closeBackpack()">
+  <div id="backpack-panel">
+    <div style="font-size:1.2rem;margin-bottom:10px">🎒 Backpack</div>
+    <div id="backpack-slots"></div>
+    <button onclick="closeBackpack()" style="margin-top:12px;padding:5px 16px;border:1px solid #666;border-radius:6px;background:transparent;color:#aaa;cursor:pointer;font-family:monospace">Close</button>
   </div>
 </div>
 
@@ -1403,7 +1442,7 @@ let _prevGoldTrack = 800;
 // ================================================================
 //  STAMINA
 // ================================================================
-const STAMINA_MAX = 100;
+const STAMINA_MAX = 150;
 let stamina = STAMINA_MAX;
 let _staminaExhausted = false; // guard: only trigger exhaust once per zero-hit
 let coffeesToday = 0;
@@ -9804,8 +9843,13 @@ const moleLabels = new Map(); // mole → DOM div
 
 function createMoleLabel(mole) {
   const div = document.createElement('div');
-  div.style.cssText = 'position:fixed;background:rgba(0,0,0,.7);color:#FFD700;font-size:.75rem;font-weight:700;padding:3px 9px;border-radius:10px;pointer-events:none;white-space:nowrap;z-index:25;display:none;transform:translateX(-50%)';
-  div.textContent = '🪙 10 — Tap to pay off';
+  if (mole.isYellow) {
+    div.style.cssText = 'position:fixed;background:rgba(60,40,0,.85);color:#FFEE44;font-size:.85rem;font-weight:700;padding:4px 12px;border-radius:12px;pointer-events:none;white-space:nowrap;z-index:25;display:none;transform:translateX(-50%);border:2px solid #FFD700';
+    div.textContent = '✨ Tap me!';
+  } else {
+    div.style.cssText = 'position:fixed;background:rgba(0,0,0,.7);color:#FFD700;font-size:.75rem;font-weight:700;padding:3px 9px;border-radius:10px;pointer-events:none;white-space:nowrap;z-index:25;display:none;transform:translateX(-50%)';
+    div.textContent = '🪙 10 — Tap to pay off';
+  }
   document.body.appendChild(div);
   moleLabels.set(mole, div);
 }
@@ -9848,11 +9892,18 @@ function spawnMole(x, z) {
 }
 
 function payOffMole(mole) {
+  if (mole.isYellow) { clickYellowMole(mole); return; }
   if (gold < 10) { showTip('⚠️ Not enough gold! (Need 10 🪙)'); return; }
   gold -= 10;
   updateGoldUI();
   sndMoleSqueak();
   mole.state = 'dismissed';
+  // Track daily mole payoffs for yellow mole trigger
+  if (_molePaidLastDay !== dayCount) { molesPaidToday = 0; _molePaidLastDay = dayCount; }
+  molesPaidToday++;
+  if (molesPaidToday >= 5 && !yellowMoleActive && Math.random() < 0.15) {
+    setTimeout(() => spawnYellowMole(), 1200);
+  }
 
   const r = Math.random();
 
@@ -9897,10 +9948,230 @@ function payOffMole(mole) {
 function resetMineMoles() {
   mineMoles.forEach(m => { mineScene.remove(m.mesh); removeMoleLabel(m); });
   mineMoles.length = 0;
+  // Also dismiss yellow mole when changing levels
+  if (yellowMoleActive) {
+    mineScene.remove(yellowMoleActive.mesh);
+    removeMoleLabel(yellowMoleActive);
+    yellowMoleActive = null;
+  }
+}
+
+function makeYellowMoleMesh() {
+  const g = new THREE.Group();
+  const bodyMat  = new THREE.MeshLambertMaterial({ color: 0xFFDD44, emissive: 0xFFCC00, emissiveIntensity: 0.6 });
+  const snoutMat = new THREE.MeshLambertMaterial({ color: 0xFFEE88 });
+  const clawMat  = new THREE.MeshLambertMaterial({ color: 0xEEBB44 });
+  const tipMat   = new THREE.MeshLambertMaterial({ color: 0xFFEEAA });
+
+  // Body — larger than normal mole
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), bodyMat);
+  body.scale.set(1, 0.85, 1.05);
+  g.add(body);
+  // Snout
+  const snout = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), snoutMat);
+  snout.scale.set(1, 0.85, 1.2);
+  snout.position.set(0, -0.02, 0.24);
+  g.add(snout);
+  // Big friendly eyes
+  const eyeGeo = new THREE.SphereGeometry(0.04, 6, 5);
+  const eyeWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const eyePupil = new THREE.MeshBasicMaterial({ color: 0x222222 });
+  [-0.10, 0.10].forEach(ex => {
+    const white = new THREE.Mesh(eyeGeo, eyeWhite);
+    white.position.set(ex, 0.10, 0.18);
+    g.add(white);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.02, 4, 4), eyePupil);
+    pupil.position.set(ex, 0.10, 0.21);
+    g.add(pupil);
+  });
+  // Front paws + claws
+  [-1, 1].forEach(side => {
+    const paw = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 5), clawMat);
+    paw.position.set(side * 0.24, -0.10, 0.12);
+    g.add(paw);
+    for (let c = 0; c < 3; c++) {
+      const angle = (c - 1) * 0.35;
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.016, 0.07, 4), tipMat);
+      tip.rotation.x = Math.PI / 2;
+      tip.position.set(side * 0.24 + Math.sin(angle) * 0.035, -0.12, 0.20 + Math.cos(angle) * 0.02);
+      g.add(tip);
+    }
+  });
+  // Little star sparkles around body
+  const starMat = new THREE.MeshLambertMaterial({ color: 0xFFFFFF, emissive: 0xFFFF88, emissiveIntensity: 2 });
+  for (let i = 0; i < 5; i++) {
+    const star = new THREE.Mesh(new THREE.SphereGeometry(0.025, 4, 4), starMat);
+    const a = (i / 5) * Math.PI * 2;
+    star.position.set(Math.cos(a) * 0.32, 0.14 + Math.sin(a * 2) * 0.06, Math.sin(a) * 0.32);
+    star.name = 'sparkle' + i;
+    g.add(star);
+  }
+  return g;
+}
+
+function sndAchievement() {
+  const notes = ['E4','G4','B4','E5','G5','B5'];
+  const vol = new Tone.Volume(-4).toDestination();
+  const rev = new Tone.Reverb({ decay: 2.8, wet: 0.45 }).connect(vol);
+  notes.forEach((note, i) => {
+    setTimeout(() => {
+      const s = new Tone.Synth({
+        oscillator: { type: 'triangle' },
+        envelope: { attack: 0.02, decay: 0.25, sustain: 0.35, release: 0.7 }
+      }).connect(rev);
+      s.triggerAttackRelease(note, '8n');
+      setTimeout(() => s.dispose(), 1800);
+    }, i * 120);
+  });
+  setTimeout(() => { rev.dispose(); vol.dispose(); }, 4000);
+}
+
+function spawnYellowMole() {
+  // Find a dug tile to spawn on
+  const eligible = [];
+  for (let x = 0; x < MINE_GRID; x++) {
+    for (let z = 0; z < MINE_GRID; z++) {
+      const td = mineTileGrid[x] && mineTileGrid[x][z];
+      if (td && td.isDug && !td.isTunnel) {
+        const hasMole = mineMoles.some(m => m.x === x && m.z === z && m.state !== 'dismissed');
+        if (!hasMole) eligible.push({ x, z });
+      }
+    }
+  }
+  if (eligible.length === 0) return;
+  const pick = eligible[Math.floor(Math.random() * eligible.length)];
+  const mesh = makeYellowMoleMesh();
+  mesh.position.set(pick.x + 0.5, -0.25, pick.z + 0.5);
+  mesh.rotation.y = Math.random() * Math.PI * 2;
+  mineScene.add(mesh);
+  const mole = { mesh, x: pick.x, z: pick.z, state: 'rising', riseT: 0, idleTimer: 0, sinkT: 0, isYellow: true };
+  createMoleLabel(mole);
+  yellowMoleActive = mole;
+  mineMoles.push(mole);
+  showTip('✨ A bright yellow mole has appeared!');
+}
+
+function clickYellowMole(mole) {
+  if (!hasBackpack) {
+    // First time — gift the backpack
+    hasBackpack = true;
+    sndAchievement();
+    showTip('🐾 "I want you to have this!" 🎒');
+    showBackpackBtn();
+    updateBackpackUI();
+  } else if (backpackExpansions < 8) {
+    // Expand backpack by 1 slot
+    backpackExpansions++;
+    backpackSlots++;
+    sndAchievement();
+    showTip(`🐾 "Here, more room for your stuff!" 🎒 +1 slot (${backpackSlots} total)`);
+    updateBackpackUI();
+  } else {
+    // All maxed out
+    const sayings = ["How are you today?", "I'm all out of goodies bud!"];
+    showTip(`🐾 "${sayings[Math.floor(Math.random() * sayings.length)]}"`);
+    sndMoleSqueak();
+  }
+  mole.state = 'dismissed';
+  removeMoleLabel(mole);
+  yellowMoleActive = null;
 }
 
 let _moleSpawnAccum = 0;
 const MOLE_SPAWN_INTERVAL = 6000; // check every 6s
+
+// Yellow mole & backpack system
+let molesPaidToday     = 0;
+let _molePaidLastDay   = -1;
+let yellowMoleActive   = null;    // the active yellow mole object or null
+let hasBackpack        = false;
+let backpackSlots      = 4;       // starts at 4 when first obtained
+let backpackExpansions = 0;       // 0-8 additional expansions
+const backpackItems    = [];      // [{type:'coffee'|'tea'|'curryPuff', emoji, name}]
+// Lazy lookup — stamina constants declared later in the file
+function getConsumableInfo(type) {
+  const map = {
+    coffee:    { emoji: '☕', name: 'Coffee',     stamina: COFFEE_STAMINA },
+    tea:       { emoji: '🍵', name: 'Tea',        stamina: TEA_STAMINA },
+    curryPuff: { emoji: '🥟', name: 'Curry Puff', stamina: CURRY_PUFF_STAMINA },
+  };
+  return map[type] || null;
+}
+
+function showBackpackBtn() {
+  document.getElementById('backpack-btn').style.display = 'flex';
+}
+
+function openBackpack() {
+  updateBackpackUI();
+  document.getElementById('backpack-overlay').style.display = 'flex';
+}
+function closeBackpack() {
+  document.getElementById('backpack-overlay').style.display = 'none';
+}
+
+function updateBackpackUI() {
+  const container = document.getElementById('backpack-slots');
+  if (!container) return;
+  let html = '';
+  for (let i = 0; i < backpackSlots; i++) {
+    if (i < backpackItems.length) {
+      const item = backpackItems[i];
+      html += `<div class="bp-slot" onclick="useBackpackItem(${i})" title="Use ${item.name}">${item.emoji}</div>`;
+    } else {
+      html += '<div class="bp-slot empty">⭕</div>';
+    }
+  }
+  container.innerHTML = html;
+}
+
+function stowInBackpack(type) {
+  if (!hasBackpack) { showTip('⚠️ You don\'t have a backpack!'); return false; }
+  if (backpackItems.length >= backpackSlots) { showTip('🎒 Backpack is full!'); return false; }
+  const info = getConsumableInfo(type);
+  if (!info) return false;
+  backpackItems.push({ type, emoji: info.emoji, name: info.name });
+  updateBackpackUI();
+  showTip(`🎒 Stowed ${info.emoji} ${info.name} in backpack.`);
+  return true;
+}
+
+function useBackpackItem(idx) {
+  if (idx < 0 || idx >= backpackItems.length) return;
+  const item = backpackItems[idx];
+  const info = getConsumableInfo(item.type);
+  if (!info) return;
+
+  // Apply stamina
+  stamina = Math.min(STAMINA_MAX, stamina + info.stamina);
+  updateStaminaUI();
+
+  // Coffee overcaffeination tracking
+  if (item.type === 'coffee') {
+    if (dayCount !== _coffeeLastDay) { coffeesToday = 0; _coffeeLastDay = dayCount; }
+    coffeesToday++;
+    if (coffeesToday >= 4 && !coffeeOvercaffeinated) {
+      coffeeOvercaffeinated = true;
+      showTip('☕☕☕☕ Too much coffee! Your hands are shaking!');
+    } else {
+      showTip(`☕ Used Coffee from backpack! +25% stamina`);
+    }
+  } else if (item.type === 'tea') {
+    if (dayCount !== _teaLastDay) { teaToday = 0; _teaLastDay = dayCount; }
+    teaToday++;
+    if (teaToday >= 8 && !teaOvercaffeinated) {
+      teaOvercaffeinated = true;
+      showTip('🍵🍵🍵🍵🍵🍵🍵🍵 Too much tea! Your hands are trembling!');
+    } else {
+      showTip(`🍵 Used Tea from backpack! +10% stamina`);
+    }
+  } else if (item.type === 'curryPuff') {
+    showTip(`🥟 Used Curry Puff from backpack! +50% stamina`);
+  }
+
+  backpackItems.splice(idx, 1);
+  updateBackpackUI();
+}
 
 function tickMineMoles(dt, now) {
   // Periodic spawn attempt
@@ -9934,14 +10205,25 @@ function tickMineMoles(dt, now) {
       mole.mesh.rotation.y += 0.015;
       if (mole.riseT >= 1) {
         mole.state = 'idle';
-        mole.idleTimer = 12000 + Math.random() * 14000;
+        mole.idleTimer = mole.isYellow ? 25000 : (12000 + Math.random() * 14000);
         sndMoleSqueak();
-        showTip('🐾 A mole appeared! Click it to pay 10 🪙 or it will refill the hole.');
+        if (mole.isYellow) {
+          showTip('✨ A bright yellow mole is waiting for you! Click it!');
+        } else {
+          showTip('🐾 A mole appeared! Click it to pay 10 🪙 or it will refill the hole.');
+        }
       }
     } else if (mole.state === 'idle') {
       // Bob & look around
       mole.mesh.position.y = 0.13 + Math.sin(now * 0.0028 + mole.x) * 0.025;
       mole.mesh.rotation.y = Math.sin(now * 0.0008 + mole.z) * 1.2;
+      // Sparkle animation for yellow mole
+      if (mole.isYellow) {
+        for (let si = 0; si < 5; si++) {
+          const sp = mole.mesh.getObjectByName('sparkle' + si);
+          if (sp) sp.position.y = 0.14 + Math.sin(now * 0.004 + si * 1.2) * 0.08;
+        }
+      }
       mole.idleTimer -= dt;
       if (mole.idleTimer <= 0) {
         mole.state = 'sinking'; // starts refilling
@@ -9951,19 +10233,22 @@ function tickMineMoles(dt, now) {
       mole.sinkT = Math.min(1, mole.sinkT + dt * 0.0007);
       mole.mesh.position.y = 0.13 - mole.sinkT * 0.38;
       if (mole.sinkT >= 1) {
-        // Refill the tile
-        const td = mineTileGrid[mole.x] && mineTileGrid[mole.x][mole.z];
-        if (td && td.isDug) {
-          td.isDug = false;
-          const tm = mineTileMeshes[mole.x] && mineTileMeshes[mole.x][mole.z];
-          if (tm && td.origColor !== undefined) tm.material.color.setHex(td.origColor);
-          const dm = mineDirtMeshes[mole.x][mole.z];
-          if (dm && mineScene.userData.levelGroup) {
-            mineScene.userData.levelGroup.remove(dm);
-            dm.traverse(c => { if (c.geometry) c.geometry.dispose(); });
-            mineDirtMeshes[mole.x][mole.z] = null;
+        // Yellow moles don't refill tiles
+        if (!mole.isYellow) {
+          const td = mineTileGrid[mole.x] && mineTileGrid[mole.x][mole.z];
+          if (td && td.isDug) {
+            td.isDug = false;
+            const tm = mineTileMeshes[mole.x] && mineTileMeshes[mole.x][mole.z];
+            if (tm && td.origColor !== undefined) tm.material.color.setHex(td.origColor);
+            const dm = mineDirtMeshes[mole.x][mole.z];
+            if (dm && mineScene.userData.levelGroup) {
+              mineScene.userData.levelGroup.remove(dm);
+              dm.traverse(c => { if (c.geometry) c.geometry.dispose(); });
+              mineDirtMeshes[mole.x][mole.z] = null;
+            }
           }
         }
+        if (mole.isYellow) yellowMoleActive = null;
         mineScene.remove(mole.mesh);
         removeMoleLabel(mole);
         mineMoles.splice(i, 1);
@@ -10354,6 +10639,7 @@ townScene.add(pathNS);
 const churchMeshes = [];
 let titheDaysCount = 0;    // separate days user has tithed
 let lastTitheDay   = -1;   // dayCount of last tithe (prevent multi-tithe same day)
+let lastPrayDay    = -1;   // dayCount of last prayer (once per day)
 let churchFlowersAdded = false;
 let churchStainedGlassAdded = false;
 const churchGroup = new THREE.Group();
@@ -11114,9 +11400,50 @@ function buySeeds(k) {
 const COFFEE_PRICE = 8;
 const COFFEE_STAMINA = Math.floor(STAMINA_MAX * 0.25);
 
+function showConsumableChoice(type, price, reopenFn) {
+  const info = getConsumableInfo(type);
+  if (!info) return;
+  const existing = document.getElementById('consumable-choice');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'consumable-choice';
+  el.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.92);border:2px solid #AA8844;border-radius:12px;padding:18px 24px;z-index:210;color:#fff;font-family:monospace;text-align:center;';
+  el.innerHTML = `
+    <div style="font-size:1.1rem;margin-bottom:12px">${info.emoji} ${info.name}</div>
+    <button id="cc-consume" style="display:block;width:100%;margin:6px 0;padding:8px 14px;border:none;border-radius:6px;cursor:pointer;font-family:monospace;font-size:.9rem;background:#2a6;color:#fff;">Consume Now</button>
+    <button id="cc-stow" style="display:block;width:100%;margin:6px 0;padding:8px 14px;border:none;border-radius:6px;cursor:pointer;font-family:monospace;font-size:.9rem;background:#448;color:#fff;">🎒 Stow in Backpack</button>
+    <button id="cc-cancel" style="display:block;width:100%;margin:8px 0 0;padding:6px;border:1px solid #666;border-radius:6px;cursor:pointer;font-family:monospace;background:transparent;color:#aaa;">Cancel</button>`;
+  document.body.appendChild(el);
+  document.getElementById('cc-consume').onclick = () => {
+    el.remove();
+    if (type === 'coffee') consumeCoffeeNow();
+    else if (type === 'tea') consumeTeaNow();
+    else if (type === 'curryPuff') consumeCurryPuffNow();
+    if (reopenFn) reopenFn();
+  };
+  document.getElementById('cc-stow').onclick = () => {
+    el.remove();
+    gold -= price;
+    updateGoldUI();
+    stowInBackpack(type);
+    if (reopenFn) reopenFn();
+  };
+  document.getElementById('cc-cancel').onclick = () => {
+    el.remove();
+    if (reopenFn) reopenFn();
+  };
+}
+
 function buyCoffee() {
   if (gold < COFFEE_PRICE) { showTip('⚠️ Not enough gold! Need ' + COFFEE_PRICE + '🪙'); return; }
-  // Reset counter if new day
+  if (hasBackpack && backpackItems.length < backpackSlots) {
+    showConsumableChoice('coffee', COFFEE_PRICE, function() { openRestaurant(); });
+    return;
+  }
+  consumeCoffeeNow();
+  openRestaurant();
+}
+function consumeCoffeeNow() {
   if (dayCount !== _coffeeLastDay) { coffeesToday = 0; _coffeeLastDay = dayCount; }
   gold -= COFFEE_PRICE;
   stamina = Math.min(STAMINA_MAX, stamina + COFFEE_STAMINA);
@@ -11131,7 +11458,6 @@ function buyCoffee() {
   } else {
     showTip('☕ Coffee! +25% stamina' + (coffeesToday === 3 ? ' (one more and you may regret it…)' : ''));
   }
-  openRestaurant();
 }
 
 function openRestaurant() {
@@ -11275,6 +11601,14 @@ function openBakery() {
 
 function buyTea() {
   if (gold < TEA_PRICE) { showTip('⚠️ Not enough gold! Need ' + TEA_PRICE + '🪙'); return; }
+  if (hasBackpack && backpackItems.length < backpackSlots) {
+    showConsumableChoice('tea', TEA_PRICE, function() { openBakery(); });
+    return;
+  }
+  consumeTeaNow();
+  openBakery();
+}
+function consumeTeaNow() {
   if (dayCount !== _teaLastDay) { teaToday = 0; _teaLastDay = dayCount; }
   gold -= TEA_PRICE;
   stamina = Math.min(STAMINA_MAX, stamina + TEA_STAMINA);
@@ -11287,17 +11621,23 @@ function buyTea() {
   } else {
     showTip('🍵 Tea! +10% stamina' + (teaToday === 7 ? ' (one more and you may regret it…)' : ''));
   }
-  openBakery();
 }
 
 function buyCurryPuff() {
   if (gold < CURRY_PUFF_PRICE) { showTip('⚠️ Not enough gold! Need ' + CURRY_PUFF_PRICE + '🪙'); return; }
+  if (hasBackpack && backpackItems.length < backpackSlots) {
+    showConsumableChoice('curryPuff', CURRY_PUFF_PRICE, function() { openBakery(); });
+    return;
+  }
+  consumeCurryPuffNow();
+  openBakery();
+}
+function consumeCurryPuffNow() {
   gold -= CURRY_PUFF_PRICE;
   stamina = Math.min(STAMINA_MAX, stamina + CURRY_PUFF_STAMINA);
   updateGoldUI();
   updateStaminaUI();
   showTip('🥟 Curry Puff Pastry! +50% stamina');
-  openBakery();
 }
 
 function sellToBakery(mat) {
@@ -11932,6 +12272,12 @@ function openChurch() {
   const info = document.getElementById('tithe-info');
   info.textContent = `Tithed on ${titheDaysCount} day${titheDaysCount !== 1 ? 's' : ''}` +
     (titheDaysCount < 5 ? ` — ${5 - titheDaysCount} more for a blessing` : ' — Blessed! ✨');
+  const prayRow = document.getElementById('pray-row');
+  if (lastPrayDay === dayCount) {
+    prayRow.innerHTML = '<span>🛐 Pray</span><span style="color:#88ff88;font-weight:700">✅ Prayed today</span>';
+  } else {
+    prayRow.innerHTML = '<span>🛐 Pray — till &amp; seed an empty plot (free)</span><button class="shop-buy-btn" onclick="pray()">Pray</button>';
+  }
   document.getElementById('church-overlay').style.display = 'flex';
 }
 
@@ -11945,6 +12291,56 @@ function tithe() {
   updateGoldUI();
   showTip(`⛪ Donated ${amt}🪙 to the church. Bless you!`);
   if (titheDaysCount >= 5 && !churchFlowersAdded) addChurchBlessing();
+  openChurch();
+}
+
+function pray() {
+  if (lastPrayDay === dayCount) { showTip('🛐 You have already prayed today.'); return; }
+  lastPrayDay = dayCount;
+
+  const blessed = lastTitheDay === dayCount;
+  const prayChance  = blessed ? 0.70 : 0.50;
+  const doubleChance = blessed ? 0.15 : 0.10;
+
+  if (Math.random() >= prayChance) {
+    showTip('…');
+    openChurch();
+    return;
+  }
+
+  function prayOnePlot() {
+    const empties = [];
+    for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
+      const d = tileGrid[x][z].userData;
+      if (d.state === ST.EMPTY && !d.obstacle) empties.push(tileGrid[x][z]);
+    }
+    if (empties.length === 0) return null;
+    const tile = empties[Math.floor(Math.random() * empties.length)];
+    const d = tile.userData;
+    d.state = ST.TILLED; d.watered = false; d.waterCount = 0;
+    d.readyDay = 0; d.decomposeDay = 0; d.tilledDay = dayCount;
+    tile.material.color.setHex(SOIL_COL[ST.TILLED]);
+    const cropKey = CROP_KEYS[Math.floor(Math.random() * CROP_KEYS.length)];
+    d.state = ST.SEEDED; d.cropKey = cropKey;
+    d.growTimer = performance.now(); d.watered = false;
+    tile.material.color.setHex(SOIL_COL[ST.SEEDED]);
+    attachPlant(tile, ST.SEEDED);
+    return cropKey;
+  }
+
+  const crop1 = prayOnePlot();
+  if (!crop1) { showTip('🛐 You prayed, but there are no empty plots to bless!'); openChurch(); return; }
+
+  if (Math.random() < doubleChance) {
+    const crop2 = prayOnePlot();
+    if (crop2) {
+      showTip(`🙏 Your prayer was answered! ${CROPS[crop1].emoji} and ${CROPS[crop2].emoji} were planted by divine grace!`);
+    } else {
+      showTip(`🙏 Your prayer was answered! ${CROPS[crop1].emoji} ${CROPS[crop1].name} was planted by divine grace!`);
+    }
+  } else {
+    showTip(`🙏 Your prayer was answered! ${CROPS[crop1].emoji} ${CROPS[crop1].name} was planted by divine grace!`);
+  }
   openChurch();
 }
 
