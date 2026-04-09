@@ -755,7 +755,7 @@
       <button class="shop-buy-btn uni-tab" onclick="switchUniTab('aerospace')" id="uni-tab-aerospace">🚀 Aerospace</button>
     </div>
     <div id="uni-panel-biology" class="uni-panel"></div>
-    <div id="uni-panel-engineering" class="uni-panel" style="display:none"><div style="color:#aaa;text-align:center;padding:18px 0">Coming soon…</div></div>
+    <div id="uni-panel-engineering" class="uni-panel" style="display:none"></div>
     <div id="uni-panel-aerospace" class="uni-panel" style="display:none"><div style="color:#aaa;text-align:center;padding:18px 0">Coming soon…</div></div>
   </div>
 </div>
@@ -794,6 +794,7 @@
       <div class="shop-row" id="robosweeper-row"></div>
       <div class="shop-row" id="eggcavator-row"></div>
       <div class="shop-row" id="automower-row"></div>
+      <div class="shop-row" id="drone-row"></div>
     </div>
   </div>
 </div>
@@ -1565,6 +1566,16 @@ let hasEggcavator        = false;
 let eggcavator           = null;
 let hasAutoMower         = false;
 let autoMower            = null;
+// Drone system
+const DRONE_PRICE        = 250;
+const DRONE_SPEED        = 0.035;
+const DRONE_PARK_X       = -1.5;
+const DRONE_PARK_Z       = -1.5;
+const DRONE_PARK_Y       = 0.3;
+const DRONE_FLY_Y        = 3.2;
+let hasDrone             = false;
+let drone                = null; // { mesh, state, mode, targetIdx, treeOres[], taskBubble }
+const treeOres           = [null, null, null, null, null, null]; // ore mesh on each tree (or null)
 // Cow system
 const COW_BARN_PRICE   = 180;
 const COW_PRICE        = 60;
@@ -6069,6 +6080,19 @@ function tickCrows(now) {
       if (t >= 1) {
         if (crow.state === 'arriving') {
           crow.mesh.position.set(crow.endPos.x, crow.endPos.y, crow.endPos.z);
+          // Check if tree has shiny ore — crow may take it and leave
+          if (treeOres[crow.perchIdx]) {
+            const oreMesh = treeOres[crow.perchIdx];
+            const oreType = oreMesh.userData.oreType;
+            const distractChance = oreType === 'gold' ? 0.60 : oreType === 'silver' ? 0.35 : 0.25;
+            if (Math.random() < distractChance) {
+              scene.remove(oreMesh);
+              treeOres[crow.perchIdx] = null;
+              showTip(`🐦‍⬛ A crow took the shiny ${oreType} and flew away!`, false);
+              departCrow(crow, now);
+              continue;
+            }
+          }
           crow.state      = 'perching';
           crow.perchUntil = now + CROW_PERCH_MIN_MS + Math.random() * (CROW_PERCH_MAX_MS - CROW_PERCH_MIN_MS);
         } else if (crow.state === 'swooping') {
@@ -8077,6 +8101,277 @@ function tickAutoMower(now) {
 }
 
 // ================================================================
+//  DRONE SYSTEM
+// ================================================================
+function makeDroneMesh() {
+  const g = new THREE.Group();
+  // Central body — dark grey box
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.12, 0.35), bodyMat);
+  g.add(body);
+  // 4 arms radiating out
+  const armMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
+  for (let i = 0; i < 4; i++) {
+    const ang = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.04, 0.06), armMat);
+    arm.position.set(Math.cos(ang) * 0.28, 0.02, Math.sin(ang) * 0.28);
+    arm.rotation.y = -ang;
+    g.add(arm);
+    // Rotor disc on each arm tip
+    const rotorMat = new THREE.MeshLambertMaterial({ color: 0x999999, transparent: true, opacity: 0.5 });
+    const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.015, 10), rotorMat);
+    rotor.position.set(Math.cos(ang) * 0.48, 0.07, Math.sin(ang) * 0.48);
+    rotor.name = 'rotor' + i;
+    g.add(rotor);
+  }
+  // Camera/sensor on underside
+  const camMat = new THREE.MeshLambertMaterial({ color: 0x2222aa });
+  const cam = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 5), camMat);
+  cam.position.y = -0.08;
+  g.add(cam);
+  // LED light
+  const ledMat = new THREE.MeshLambertMaterial({ color: 0x00ff00, emissive: 0x00ff00, emissiveIntensity: 1.5 });
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.03, 4, 4), ledMat);
+  led.position.set(0.17, 0.06, 0);
+  led.name = 'led';
+  g.add(led);
+  return g;
+}
+
+function makeTreeOreMesh(oreType) {
+  const colors = { copper: 0xDD7733, silver: 0xCCCCCC, gold: 0xFFD700 };
+  const col = colors[oreType] || 0xDD7733;
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 1.2 });
+  // Large visible nugget
+  const nugget = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), mat);
+  nugget.scale.set(1.2, 0.7, 1.2);
+  g.add(nugget);
+  // Small sparkle highlight on top
+  const sparkMat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.5 });
+  const spark = new THREE.Mesh(new THREE.SphereGeometry(0.05, 5, 5), sparkMat);
+  spark.position.y = 0.18;
+  g.add(spark);
+  g.userData.oreType = oreType;
+  return g;
+}
+
+function spawnDrone() {
+  const mesh = makeDroneMesh();
+  mesh.position.set(DRONE_PARK_X, DRONE_PARK_Y, DRONE_PARK_Z);
+  scene.add(mesh);
+  drone = {
+    mesh,
+    state: 'parked',  // 'parked','flyToTree','depositing','flyToBase','flyToCrop','harvesting'
+    mode: 'deterCrows', // 'deterCrows' or 'harvestCrops'
+    targetIdx: -1,     // which tree (0-5) or which crop tile
+    targetX: 0, targetZ: 0, targetY: 0,
+    stateStart: 0,
+    carryingOre: null,  // 'copper','silver','gold' or null
+    taskBubble: null,   // DOM element for "task?" bubble
+    propPhase: 0,
+  };
+}
+
+function pickDroneOre() {
+  // Pick ore from inventory: copper first, then silver, then gold
+  if (materials.copper > 0) { materials.copper--; updateMaterialsUI(); return 'copper'; }
+  if (materials.silver > 0) { materials.silver--; updateMaterialsUI(); return 'silver'; }
+  if (materials.gold > 0)   { materials.gold--;   updateMaterialsUI(); return 'gold'; }
+  return null;
+}
+
+function findEmptyTree() {
+  for (let i = 0; i < 6; i++) {
+    if (!treeOres[i]) return i;
+  }
+  return -1;
+}
+
+function droneHarvestTile(x, z) {
+  const tile = tileGrid[x][z];
+  const d = tile.userData;
+  if (d.state !== ST.READY || !d.cropKey) return false;
+  const crop = CROPS[d.cropKey];
+  if (d.plant) { scene.remove(d.plant); d.plant = null; }
+  const yield_ = d.fertilized ? 2 : 1;
+  inventory[d.cropKey].harvested += yield_;
+  updateInventoryUI(d.cropKey);
+  showTip(`🛩️ Drone harvested ${crop.emoji} ${crop.name}!`, false);
+  d.state = ST.TILLED; d.cropKey = null; d.watered = false; d.waterCount = 0; d.tilledDay = dayCount;
+  tile.material.color.setHex(SOIL_COL[ST.TILLED]);
+  return true;
+}
+
+function findReadyCrop() {
+  for (let x = 0; x < GRID; x++) {
+    for (let z = 0; z < GRID; z++) {
+      if (tileGrid[x][z].userData.state === ST.READY && tileGrid[x][z].userData.cropKey) {
+        return { x, z };
+      }
+    }
+  }
+  return null;
+}
+
+function tickDrone(now) {
+  if (!hasDrone || !drone) return;
+  const d = drone;
+
+  // Spin rotors
+  d.propPhase += 0.3;
+  for (let i = 0; i < 4; i++) {
+    const rotor = d.mesh.getObjectByName('rotor' + i);
+    if (rotor) rotor.rotation.y = d.propPhase * (i % 2 === 0 ? 1 : -1);
+  }
+
+  // LED blink
+  const led = d.mesh.getObjectByName('led');
+  if (led) led.visible = Math.floor(now / 500) % 2 === 0;
+
+  // Gentle hover bob when not parked
+  if (d.state !== 'parked') {
+    d.mesh.position.y += Math.sin(now * 0.005) * 0.001;
+  }
+
+  if (d.state === 'parked') {
+    // Decide what to do based on mode
+    if (d.mode === 'deterCrows') {
+      const emptyTree = findEmptyTree();
+      if (emptyTree >= 0) {
+        const ore = pickDroneOre();
+        if (ore) {
+          d.carryingOre = ore;
+          d.targetIdx = emptyTree;
+          const perch = CROW_PERCHES[emptyTree];
+          d.targetX = perch.x; d.targetZ = perch.z; d.targetY = CROW_PERCH_Y + 0.3;
+          d.state = 'flyToTree';
+          d.stateStart = now;
+        }
+      }
+    } else if (d.mode === 'harvestCrops') {
+      const crop = findReadyCrop();
+      if (crop) {
+        d.targetX = crop.x + 0.5; d.targetZ = crop.z + 0.5; d.targetY = 1.0;
+        d.targetIdx = crop.x * GRID + crop.z;
+        d.state = 'flyToCrop';
+        d.stateStart = now;
+      }
+    }
+    return;
+  }
+
+  // Movement helper
+  function flyToward(tx, ty, tz, speed) {
+    const mx = d.mesh.position.x, my = d.mesh.position.y, mz = d.mesh.position.z;
+    const dx = tx - mx, dy = ty - my, dz = tz - mz;
+    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    if (dist < 0.15) return true; // arrived
+    const s = Math.min(speed, dist);
+    d.mesh.position.x += (dx / dist) * s;
+    d.mesh.position.y += (dy / dist) * s;
+    d.mesh.position.z += (dz / dist) * s;
+    // Face direction
+    if (Math.abs(dx) + Math.abs(dz) > 0.01) d.mesh.rotation.y = Math.atan2(dx, dz);
+    return false;
+  }
+
+  if (d.state === 'flyToTree') {
+    // First rise to fly altitude, then go horizontal, then descend to tree
+    const phase = now - d.stateStart;
+    if (d.mesh.position.y < DRONE_FLY_Y && phase < 1500) {
+      d.mesh.position.y += 0.04;
+    } else if (flyToward(d.targetX, d.targetY, d.targetZ, DRONE_SPEED)) {
+      // Arrived at tree — deposit ore
+      d.state = 'depositing';
+      d.stateStart = now;
+    }
+
+  } else if (d.state === 'depositing') {
+    // Brief pause then place ore
+    if (now - d.stateStart > 600) {
+      if (d.carryingOre && d.targetIdx >= 0 && !treeOres[d.targetIdx]) {
+        const oreMesh = makeTreeOreMesh(d.carryingOre);
+        const perch = CROW_PERCHES[d.targetIdx];
+        oreMesh.position.set(perch.x, CROW_PERCH_Y + 0.15, perch.z);
+        scene.add(oreMesh);
+        treeOres[d.targetIdx] = oreMesh;
+      }
+      d.carryingOre = null;
+      d.targetIdx = -1;
+      d.state = 'flyToBase';
+      d.stateStart = now;
+    }
+
+  } else if (d.state === 'flyToBase') {
+    if (flyToward(DRONE_PARK_X, DRONE_PARK_Y, DRONE_PARK_Z, DRONE_SPEED)) {
+      d.state = 'parked';
+      d.mesh.position.set(DRONE_PARK_X, DRONE_PARK_Y, DRONE_PARK_Z);
+    }
+
+  } else if (d.state === 'flyToCrop') {
+    const phase = now - d.stateStart;
+    if (d.mesh.position.y < DRONE_FLY_Y && phase < 1500) {
+      d.mesh.position.y += 0.04;
+    } else if (flyToward(d.targetX, d.targetY, d.targetZ, DRONE_SPEED)) {
+      d.state = 'harvesting';
+      d.stateStart = now;
+    }
+
+  } else if (d.state === 'harvesting') {
+    if (now - d.stateStart > 800) {
+      const tx = Math.floor(d.targetX); const tz = Math.floor(d.targetZ);
+      if (tx >= 0 && tx < GRID && tz >= 0 && tz < GRID) {
+        droneHarvestTile(tx, tz);
+      }
+      // Look for next crop or go home
+      const next = findReadyCrop();
+      if (next) {
+        d.targetX = next.x + 0.5; d.targetZ = next.z + 0.5; d.targetY = 1.0;
+        d.state = 'flyToCrop';
+        d.stateStart = now;
+      } else {
+        d.state = 'flyToBase';
+        d.stateStart = now;
+      }
+    }
+  }
+}
+
+function showDroneTaskMenu() {
+  // Remove any existing menu
+  closeDroneTaskMenu();
+  const el = document.createElement('div');
+  el.id = 'drone-task-menu';
+  el.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.88);border:2px solid #4af;border-radius:12px;padding:16px 22px;z-index:200;color:#fff;font-family:monospace;text-align:center;';
+  el.innerHTML = `
+    <div style="font-size:1.1rem;margin-bottom:12px">🛩️ Drone Task?</div>
+    <button onclick="setDroneMode('deterCrows')" style="display:block;width:100%;margin:6px 0;padding:8px 14px;border:none;border-radius:6px;cursor:pointer;font-family:monospace;font-size:.9rem;background:${drone.mode === 'deterCrows' ? '#2a6' : '#444'};color:#fff;">🪺 Deter Crows ${drone.mode === 'deterCrows' ? '(active)' : ''}</button>
+    ${engSkills.cropHarvesting
+      ? `<button onclick="setDroneMode('harvestCrops')" style="display:block;width:100%;margin:6px 0;padding:8px 14px;border:none;border-radius:6px;cursor:pointer;font-family:monospace;font-size:.9rem;background:${drone.mode === 'harvestCrops' ? '#2a6' : '#444'};color:#fff;">🌾 Harvest Crops ${drone.mode === 'harvestCrops' ? '(active)' : ''}</button>`
+      : '<div style="color:#666;font-size:.8rem;margin-top:4px">🔒 Research Crop Harvesting at University</div>'}
+    <button onclick="closeDroneTaskMenu()" style="display:block;width:100%;margin:8px 0 0;padding:6px;border:1px solid #666;border-radius:6px;cursor:pointer;font-family:monospace;background:transparent;color:#aaa;">Cancel</button>`;
+  document.body.appendChild(el);
+}
+
+function setDroneMode(mode) {
+  if (!drone) return;
+  drone.mode = mode;
+  // If switching to deterCrows, reset to parked so it starts fresh
+  if (drone.state !== 'parked') {
+    drone.state = 'flyToBase';
+    drone.stateStart = performance.now();
+  }
+  closeDroneTaskMenu();
+  showTip(mode === 'deterCrows' ? '🛩️ Drone set to deter crows.' : '🛩️ Drone set to harvest crops.');
+}
+
+function closeDroneTaskMenu() {
+  const el = document.getElementById('drone-task-menu');
+  if (el) el.remove();
+}
+
+// ================================================================
 //  RAYCASTING
 // ================================================================
 const raycaster  = new THREE.Raycaster();
@@ -8264,6 +8559,17 @@ canvas.addEventListener('click', async e => {
       } else {
         showTip('🚜 Mowing all wild grass. (Green light)');
       }
+      return;
+    }
+  }
+
+  // Drone click — show task bubble (requires Task Scheduler skill)
+  if (drone && engSkills.taskScheduler) {
+    const droneKids = [];
+    drone.mesh.traverse(c => { if (c.isMesh) droneKids.push(c); });
+    const droneHits = raycaster.intersectObjects(droneKids);
+    if (droneHits.length > 0) {
+      showDroneTaskMenu();
       return;
     }
   }
@@ -8499,6 +8805,7 @@ function animate(now) {
     tickRoboSweeper(now);
     tickEggcavator(now);
     tickAutoMower(now);
+    tickDrone(now);
     tickCameraFocus(now);
     tickBlightBugs(now);
     tickRainbow(now);
@@ -8566,12 +8873,15 @@ const MINE_TILE_W    = 1.0;
 // Mineral drop chances per level band
 function mineDropChances(level) {
   const t = (level - 1) / (MINE_MAX_LEVEL - 1); // 0..1
+  // Tithe blessing: shift drops toward rarer minerals
+  const blessed = lastTitheDay === dayCount;
+  const bless = blessed ? 0.08 : 0;
   return {
-    rock:    0.55 - t * 0.20,   // 55% → 35%
-    copper:  0.30 - t * 0.10,   // 30% → 20%
-    silver:  0.10 + t * 0.10,   // 10% → 20%
-    gold:    0.05 + t * 0.20,   // 5%  → 25%
-    nothing: 0,                  // remainder
+    rock:    Math.max(0.10, (0.55 - t * 0.20) - bless * 2),
+    copper:  (0.30 - t * 0.10) - bless * 0.5,
+    silver:  (0.10 + t * 0.10) + bless,
+    gold:    (0.05 + t * 0.20) + bless,
+    nothing: 0,
   };
 }
 
@@ -9159,8 +9469,9 @@ function digMineTile(x, z) {
   mineScene.userData.levelGroup.add(dm);
   mineDirtMeshes[x][z] = dm;
 
-  // Small chance of a mineral find while digging
-  if (Math.random() < 0.08 + (mineLevel / MINE_MAX_LEVEL) * 0.12) {
+  // Small chance of a mineral find while digging (tithe blessing boosts)
+  const digBonus = lastTitheDay === dayCount ? 0.08 : 0;
+  if (Math.random() < 0.08 + (mineLevel / MINE_MAX_LEVEL) * 0.12 + digBonus) {
     const drop = rollMineDrop(mineLevel);
     if (drop) showTip(`🪏 Dug something up! ${drop}`);
     else showTip('🪏 Dug — nothing here.');
@@ -11337,6 +11648,10 @@ const bioSkills = {
   tillWorms:    false,
   aromatics:    false,
 };
+const engSkills = {
+  taskScheduler:  false,
+  cropHarvesting: false,
+};
 let _uniTab = 'biology';
 
 function checkUniversityUnlock() {
@@ -11356,6 +11671,7 @@ function switchUniTab(tab) {
     document.getElementById('uni-tab-' + t).classList.toggle('active', t === tab);
   });
   if (tab === 'biology') renderBioTree();
+  if (tab === 'engineering') renderEngTree();
 }
 
 function openUniversity() {
@@ -11442,6 +11758,66 @@ function unlockBioSkill(id) {
   renderBioTree();
 }
 
+function renderEngTree() {
+  const panel = document.getElementById('uni-panel-engineering');
+  const sched = engSkills.taskScheduler;
+  const harv  = engSkills.cropHarvesting;
+
+  function card(id, title, desc, costHtml, unlocked, canBuy, prereqMet) {
+    const cls = unlocked ? 'uni-skill unlocked' : (prereqMet ? 'uni-skill' : 'uni-skill locked');
+    const badge = unlocked ? '<span style="color:#88ff88;font-weight:700;float:right">✅</span>' : '';
+    const btn = (!unlocked && prereqMet)
+      ? `<button class="shop-buy-btn" style="margin-top:5px;font-size:.78rem" ${canBuy?'':'disabled style="margin-top:5px;font-size:.78rem;opacity:.45"'} onclick="unlockEngSkill('${id}')">Research</button>`
+      : '';
+    return `<div class="${cls}"><div class="uni-skill-title">${title}${badge}</div><div class="uni-skill-desc">${desc}</div><div class="uni-skill-cost">${costHtml}</div>${btn}</div>`;
+  }
+
+  const schedCost = '100🪙 + 4⚪ silver';
+  const schedCan  = gold >= 100 && materials.silver >= 4;
+
+  const harvCost = '150🪙 + 6🟠 copper';
+  const harvCan  = gold >= 150 && materials.copper >= 6;
+
+  let html = '';
+  // Root: Task Scheduler
+  html += card('taskScheduler', '📋 Task Scheduler',
+    'Unlocks drone task management — assign tasks to your drone.',
+    schedCost, sched, schedCan, true);
+
+  if (sched) {
+    html += '<div style="text-align:center;height:18px"><div style="width:2px;height:18px;background:#555;margin:0 auto"></div></div>';
+    html += '<div class="uni-tree-branch">';
+    html += '<div>' + card('cropHarvesting', '🌾 Crop Harvesting',
+      'Drone can be assigned to automatically harvest ripe crops.',
+      harvCost, harv, harvCan, true) + '</div>';
+    html += '<div><div class="uni-skill locked"><div class="uni-skill-title">🔒 ???</div><div class="uni-skill-desc">Future research</div></div></div>';
+    html += '</div>';
+  } else {
+    html += '<div style="text-align:center;color:#555;font-size:.75rem;margin-top:6px">🔒 Further research locked — unlock Task Scheduler first</div>';
+  }
+
+  panel.innerHTML = html;
+}
+
+function unlockEngSkill(id) {
+  if (id === 'taskScheduler') {
+    if (engSkills.taskScheduler) return;
+    if (gold < 100 || materials.silver < 4) { showTip('⚠️ Not enough resources!'); return; }
+    gold -= 100; materials.silver -= 4;
+    engSkills.taskScheduler = true;
+    showTip('📋 Task Scheduler researched! Click your drone to assign tasks.');
+  } else if (id === 'cropHarvesting') {
+    if (!engSkills.taskScheduler || engSkills.cropHarvesting) return;
+    if (gold < 150 || materials.copper < 6) { showTip('⚠️ Not enough resources!'); return; }
+    gold -= 150; materials.copper -= 6;
+    engSkills.cropHarvesting = true;
+    showTip('🌾 Crop Harvesting researched! Your drone can now harvest crops.');
+  }
+  updateGoldUI();
+  updateMaterialsUI();
+  renderEngTree();
+}
+
 function openRoboticsShop() {
   if (!roboticsUnlocked) { showTip('🔧 Still under construction…'); return; }
   const row = document.getElementById('robosweeper-row');
@@ -11473,7 +11849,27 @@ function openRoboticsShop() {
       <small style="color:#aaa;display:block;margin-top:2px">Tractor that mows wild grass automatically</small>
       <button class="shop-buy-btn" onclick="buyAutoMower()">Buy ${AUTOMOWER_PRICE}🪙</button>`;
   }
+  const drow = document.getElementById('drone-row');
+  if (hasDrone) {
+    const modeLabel = drone.mode === 'deterCrows' ? '🪺 Deterring crows' : '🌾 Harvesting crops';
+    drow.innerHTML = `<span>🛩️ Drone</span><span style="color:#88ff88;font-weight:700">✅ Deployed — ${modeLabel}</span>`;
+  } else {
+    drow.innerHTML = `<span>🛩️ Drone</span>
+      <small style="color:#aaa;display:block;margin-top:2px">Flying drone that deters crows by placing shiny ore on trees</small>
+      <button class="shop-buy-btn" onclick="buyDrone()">Buy ${DRONE_PRICE}🪙</button>`;
+  }
   document.getElementById('robotics-overlay').style.display = 'flex';
+}
+
+function buyDrone() {
+  if (hasDrone) return;
+  if (gold < DRONE_PRICE) { showTip(`⚠️ Not enough gold! Need ${DRONE_PRICE}🪙`); return; }
+  gold -= DRONE_PRICE;
+  hasDrone = true;
+  updateGoldUI();
+  spawnDrone();
+  openRoboticsShop();
+  showTip('🛩️ Drone deployed! It will place ore on trees to distract crows.');
 }
 
 function buyEggcavator() {
