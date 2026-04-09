@@ -1581,6 +1581,16 @@ let cowBarnMesh         = null;
 const cows              = [];
 const tombstones        = [];
 let tombstoneCount      = 0;
+// UFO abduction system
+const UFO_HEIGHT        = 5;
+const UFO_FLY_SPEED     = 0.06;
+let ufoGroup            = null;
+let ufoBeamMesh         = null;
+let ufoActive           = false;
+let ufoState            = 'idle'; // 'flyIn','hover','beam','flyOut'
+let ufoTargetCow        = null;
+let ufoNightChecked     = -1;
+let ufoStateStart       = 0;
 // Pig system
 const PIG_STY_PRICE    = 140;
 const PIG_PRICE        = 50;
@@ -5378,6 +5388,9 @@ function tickCows(now) {
   for (let i = 0; i < cows.length; i++) {
     const cow = cows[i];
 
+    // Skip cow being abducted by UFO
+    if (ufoActive && ufoTargetCow === cow) continue;
+
     // Bob animation
     cow.bobT += 0.04;
     const baseY = cow.stage === 'calf' ? 0.12 : 0.18;
@@ -5537,6 +5550,211 @@ function tickCows(now) {
       cow.mesh.position.x += (dx / dist) * speed;
       cow.mesh.position.z += (dz / dist) * speed;
       cow.mesh.rotation.y = Math.atan2(dx, dz);
+    }
+  }
+}
+
+// ================================================================
+//  UFO ABDUCTION SYSTEM
+// ================================================================
+const UFO_FLICKER_COLORS = [0xff0000,0x00ff00,0x0000ff,0xffff00,0xff00ff,0x00ffff,0xff8800,0x88ff00,0xffffff];
+
+function makeUfoMesh() {
+  const g = new THREE.Group();
+
+  // Main cylindrical body — thick saucer shape
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x889099 });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 0.8, 24), bodyMat);
+  g.add(body);
+
+  // Tapered lower hull
+  const hullMat = new THREE.MeshLambertMaterial({ color: 0x667077 });
+  const hull = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 0.65, 0.5, 24), hullMat);
+  hull.position.y = -0.65;
+  g.add(hull);
+
+  // Upper taper ring
+  const upperMat = new THREE.MeshLambertMaterial({ color: 0x99a0a8 });
+  const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.4, 0.3, 24), upperMat);
+  upper.position.y = 0.55;
+  g.add(upper);
+
+  // Semi-transparent observation orb on top
+  const orbMat = new THREE.MeshLambertMaterial({
+    color: 0x88ddff, transparent: true, opacity: 0.4,
+    emissive: 0x225588, emissiveIntensity: 0.8
+  });
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), orbMat);
+  orb.position.y = 0.95;
+  g.add(orb);
+
+  // Metallic band around orb base
+  const bandMat = new THREE.MeshLambertMaterial({ color: 0x556070 });
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.07, 8, 20), bandMat);
+  band.position.y = 0.70;
+  g.add(band);
+
+  // Undercarriage emitter glow
+  const emitMat = new THREE.MeshLambertMaterial({ color: 0x55ffaa, emissive: 0x44ee88, emissiveIntensity: 1.5 });
+  const emitter = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.18, 0.14, 10), emitMat);
+  emitter.position.y = -0.92;
+  g.add(emitter);
+
+  // Multicolor flickering lights ring — stored for animation
+  g.userData.lights = [];
+  for (let i = 0; i < 16; i++) {
+    const ang = (i / 16) * Math.PI * 2;
+    const c = UFO_FLICKER_COLORS[i % UFO_FLICKER_COLORS.length];
+    const lMat = new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: 2 });
+    const lm = new THREE.Mesh(new THREE.SphereGeometry(0.08, 5, 5), lMat);
+    lm.position.set(Math.cos(ang) * 1.35, -0.15, Math.sin(ang) * 1.35);
+    g.add(lm);
+    g.userData.lights.push(lm);
+  }
+
+  return g;
+}
+
+function tickUFO(now) {
+  // ---- Trigger check (once per night, if not tithed) ----
+  if (!ufoActive && ufoNightChecked < dayCount) {
+    const isDeepNight = dayPhase > 0.68 && dayPhase < 0.91;
+    if (isDeepNight && lastTitheDay !== dayCount) {
+      ufoNightChecked = dayCount;
+      const adultCows = cows.filter(c => c.stage === 'adult');
+      if (adultCows.length > 0 && Math.random() < 0.60) {
+        ufoTargetCow = adultCows[Math.floor(Math.random() * adultCows.length)];
+        // Build UFO and position offscreen high up
+        ufoGroup = makeUfoMesh();
+        const startX = ufoTargetCow.mesh.position.x + (Math.random() < 0.5 ? -18 : 18);
+        const startZ = ufoTargetCow.mesh.position.z + (Math.random() < 0.5 ? -18 : 18);
+        ufoGroup.position.set(startX, UFO_HEIGHT + 6, startZ);
+        scene.add(ufoGroup);
+        // Tractor beam — narrow at top (UFO underside), wide at bottom (ground)
+        const beamH = UFO_HEIGHT;
+        const beamMat = new THREE.MeshLambertMaterial({ color: 0x66ffbb, transparent: true, opacity: 0.38, side: THREE.DoubleSide, emissive: 0x33ff88, emissiveIntensity: 1.2 });
+        ufoBeamMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 1.3, beamH, 16, 1, true), beamMat);
+        ufoBeamMesh.visible = false;
+        scene.add(ufoBeamMesh);
+        ufoActive = true;
+        ufoState = 'flyIn';
+        ufoStateStart = now;
+        showTip('🛸 Something strange in the sky...');
+      }
+    }
+    return;
+  }
+
+  if (!ufoActive || !ufoGroup) return;
+
+  // Spin UFO continuously
+  ufoGroup.rotation.y += 0.04;
+
+  // Flicker lights — randomly change colors
+  if (ufoGroup.userData.lights) {
+    for (const lm of ufoGroup.userData.lights) {
+      if (Math.random() < 0.12) {
+        const c = UFO_FLICKER_COLORS[Math.floor(Math.random() * UFO_FLICKER_COLORS.length)];
+        lm.material.color.setHex(c);
+        lm.material.emissive.setHex(c);
+      }
+    }
+  }
+
+  if (ufoState === 'flyIn') {
+    // Fly toward cow position and descend to hover height
+    const tx = ufoTargetCow ? ufoTargetCow.mesh.position.x : GRID / 2;
+    const tz = ufoTargetCow ? ufoTargetCow.mesh.position.z : GRID / 2;
+    const dx = tx - ufoGroup.position.x;
+    const dz = tz - ufoGroup.position.z;
+    const dy = UFO_HEIGHT - ufoGroup.position.y;
+    const dist = Math.hypot(dx, dz);
+    const spd = UFO_FLY_SPEED * 2;
+    if (dist > 0.3) {
+      ufoGroup.position.x += (dx / dist) * spd;
+      ufoGroup.position.z += (dz / dist) * spd;
+    }
+    // Descend gradually to hover height
+    if (Math.abs(dy) > 0.1) {
+      ufoGroup.position.y += Math.sign(dy) * 0.04;
+    }
+    if (dist <= 0.3 && Math.abs(dy) <= 0.1) {
+      ufoGroup.position.x = tx;
+      ufoGroup.position.z = tz;
+      ufoGroup.position.y = UFO_HEIGHT;
+      ufoState = 'hover';
+      ufoStateStart = now;
+    }
+
+  } else if (ufoState === 'hover') {
+    // Gentle bob while hovering over cow
+    ufoGroup.position.y = UFO_HEIGHT + Math.sin(now * 0.004) * 0.2;
+    if (now - ufoStateStart > 1800) {
+      // Activate tractor beam
+      const bY = ufoGroup.position.y / 2;
+      ufoBeamMesh.position.set(ufoGroup.position.x, bY, ufoGroup.position.z);
+      ufoBeamMesh.scale.y = ufoGroup.position.y / UFO_HEIGHT;
+      ufoBeamMesh.visible = true;
+      ufoState = 'beam';
+      ufoStateStart = now;
+      showTip('👽 Tractor beam! A cow is being abducted!');
+    }
+
+  } else if (ufoState === 'beam') {
+    // UFO bobs gently
+    ufoGroup.position.y = UFO_HEIGHT + Math.sin(now * 0.004) * 0.2;
+    // Keep beam positioned between UFO and ground
+    const bY = ufoGroup.position.y / 2;
+    ufoBeamMesh.position.set(ufoGroup.position.x, bY, ufoGroup.position.z);
+    ufoBeamMesh.scale.y = ufoGroup.position.y / UFO_HEIGHT;
+    // Pulse beam opacity
+    ufoBeamMesh.material.opacity = 0.30 + Math.abs(Math.sin(now * 0.006)) * 0.30;
+
+    if (ufoTargetCow && cows.includes(ufoTargetCow)) {
+      // Cow levitates upward — lock x/z under UFO, rise slowly
+      ufoTargetCow.mesh.position.x += (ufoGroup.position.x - ufoTargetCow.mesh.position.x) * 0.08;
+      ufoTargetCow.mesh.position.z += (ufoGroup.position.z - ufoTargetCow.mesh.position.z) * 0.08;
+      ufoTargetCow.mesh.position.y += 0.012;
+      ufoTargetCow.mesh.rotation.y += 0.08;
+      if (ufoTargetCow.mesh.position.y >= UFO_HEIGHT - 1.2) {
+        // Cow reaches UFO — abducted
+        if (ufoTargetCow.milkBubble) { ufoTargetCow.milkBubble.remove(); ufoTargetCow.milkBubble = null; }
+        scene.remove(ufoTargetCow.mesh);
+        const idx = cows.indexOf(ufoTargetCow);
+        if (idx >= 0) cows.splice(idx, 1);
+        ufoBeamMesh.visible = false;
+        ufoTargetCow = null;
+        ufoState = 'flyOut';
+        ufoStateStart = now;
+        ufoGroup._flyOutX = (Math.random() < 0.5 ? -1 : 1);
+        ufoGroup._flyOutZ = (Math.random() < 0.5 ? -1 : 1);
+        showTip('🛸 The UFO took your cow and flew away!');
+      }
+    } else {
+      // Cow gone (died etc.) — abort beam
+      ufoBeamMesh.visible = false;
+      ufoTargetCow = null;
+      ufoState = 'flyOut';
+      ufoStateStart = now;
+      ufoGroup._flyOutX = -1;
+      ufoGroup._flyOutZ = -1;
+    }
+
+  } else if (ufoState === 'flyOut') {
+    // Accelerate upward and offscreen
+    const elapsed = now - ufoStateStart;
+    const accel = 1 + elapsed * 0.001; // accelerates over time
+    ufoGroup.position.y += 0.06 * accel;
+    ufoGroup.position.x += UFO_FLY_SPEED * accel * (ufoGroup._flyOutX || -1);
+    ufoGroup.position.z += UFO_FLY_SPEED * accel * (ufoGroup._flyOutZ || -1);
+    if (ufoGroup.position.y > 30 || elapsed > 5000) {
+      scene.remove(ufoGroup);
+      scene.remove(ufoBeamMesh);
+      ufoGroup = null;
+      ufoBeamMesh = null;
+      ufoActive = false;
+      ufoState = 'idle';
+      ufoTargetCow = null;
     }
   }
 }
@@ -8275,6 +8493,7 @@ function animate(now) {
     tickMushrooms(now);
     tickFish(now);
     tickCows(now);
+    tickUFO(now);
     tickPigs(now);
     tickCrows(now);
     tickRoboSweeper(now);
