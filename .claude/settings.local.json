@@ -5,7 +5,8 @@
       "Bash(node -e \"const fs=require\\('fs'\\); const html=fs.readFileSync\\('index.html','utf8'\\); const m=html.match\\(/<script[^>]*>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\); if\\(m\\) m.forEach\\(\\(s,i\\)=>{ const code=s.replace\\(/<\\\\/?script[^>]*>/g,''\\); try { new Function\\(code\\); console.log\\('Script block '+i+': OK'\\); } catch\\(e\\) { console.log\\('Script block '+i+': '+e.message\\); } }\\);\")",
       "Bash(where.exe node:*)",
       "Bash(\"/c/Program Files/nodejs/node.exe\" -e \"const fs=require\\('fs'\\); const html=fs.readFileSync\\('c:/Users/Mario/Documents/correctgit/farmaggedon/index.html','utf8'\\); const m=html.match\\(/<script[^>]*>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\); if\\(m\\) m.forEach\\(\\(s,i\\)=>{ const code=s.replace\\(/<\\\\/?script[^>]*>/g,''\\); try { new Function\\(code\\); console.log\\('Script block '+i+': OK'\\); } catch\\(e\\) { console.log\\('Script block '+i+': '+e.message\\); } }\\);\")",
-      "Bash(cmd.exe /c \"where node\")"
+      "Bash(cmd.exe /c \"where node\")",
+      "Bash(powershell -Command '$lines = Get-Content index.html; $start = 1012; $end = 13372; $js = $lines[\\($start\\)..\\($end - 2\\)] -join [char]10; $js | Out-File -Encoding utf8 _temp_check.js; Write-Host \"Extracted JS, length:\" $js.Length')"
     ]
   }
 }

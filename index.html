@@ -160,6 +160,15 @@
     .bp-slot:hover { border-color: #FFD700; background: rgba(255,215,0,.12); }
     .bp-slot.empty { cursor: default; opacity: .4; }
 
+    /* ---- SLEEP FADE OVERLAY ---- */
+    #sleep-fade-overlay {
+      position: fixed; inset: 0; background: #000; opacity: 0;
+      pointer-events: none; z-index: 9999;
+      transition: opacity 0.8s ease-in-out;
+    }
+    #sleep-fade-overlay.fade-in  { opacity: 1; }
+    #sleep-fade-overlay.fade-out { opacity: 0; }
+
     /* ---- NIGHT OVERLAY ---- */
     #night-overlay {
       position: fixed; inset: 0; background: rgba(0,5,30,0);
@@ -616,6 +625,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="sleep-fade-overlay"></div>
 <div id="night-overlay"></div>
 <div id="rain-overlay"></div>
 <div id="wind-overlay"></div>
@@ -735,6 +745,58 @@
           Status: <span id="craft-fd-status">ready to craft</span>
         </div>
       </div>
+    </div>
+
+    <!-- Irrigation section (hidden until researched) -->
+    <div class="shop-section" id="craft-irrigation-section" style="display:none">
+      <h4>💧 Irrigation</h4>
+
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:6px">
+        <span style="font-size:.82rem;color:#ccc;line-height:1.5">
+          Build an irrigation network: pump water from the pond through pipes to sprinklers.
+        </span>
+      </div>
+
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:4px;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between">
+          <span style="font-size:.88rem">🔵 Pump &nbsp;<small style="color:#aaa">10🟠 copper + 5🪨 rock + 2⚪ silver</small></span>
+          <button class="shop-buy-btn" id="craft-pump-btn" onclick="craftPump()" style="background:rgba(20,100,160,.85)">Craft</button>
+        </div>
+        <div style="font-size:.72rem;color:#888">Must be placed on the pond. Only 1 pump needed.</div>
+      </div>
+
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:4px;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between">
+          <span style="font-size:.88rem">| Pipe &nbsp;<small style="color:#aaa">1🟠 copper per tile length</small></span>
+          <button class="shop-buy-btn" id="craft-pipe-btn" onclick="craftPipe()" style="background:rgba(140,90,30,.85)">Place</button>
+        </div>
+        <div style="font-size:.72rem;color:#888">Click start then end. Must connect to pump. Cost scales with length.</div>
+      </div>
+
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:4px;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between">
+          <span style="font-size:.88rem">+ 4-Way Joint &nbsp;<small style="color:#aaa">3🟠 copper + 2🪨 rock</small></span>
+          <button class="shop-buy-btn" id="craft-joint-btn" onclick="craftJoint()" style="background:rgba(100,100,100,.85)">Place</button>
+        </div>
+        <div style="font-size:.72rem;color:#888">Splits pipe flow in 4 directions. Place on existing pipe.</div>
+      </div>
+
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:4px;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between">
+          <span style="font-size:.88rem">🌀 Sprinkler &nbsp;<small style="color:#aaa">5🟠 copper + 3🪨 rock + 1⚪ silver</small></span>
+          <button class="shop-buy-btn" id="craft-sprinkler-btn" onclick="craftSprinkler()" style="background:rgba(30,130,70,.85)">Place</button>
+        </div>
+        <div style="font-size:.72rem;color:#888">Place at pipe end or 4-way joint. Waters crops in 2-tile radius each morning.</div>
+      </div>
+
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:4px;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between">
+          <span style="font-size:.88rem">🗑️ Delete &nbsp;<small style="color:#aaa">Click any irrigation item to remove (50% resources back)</small></span>
+          <button class="shop-buy-btn" id="craft-delete-btn" onclick="startIrrigationDelete()" style="background:rgba(160,30,30,.85)">Delete</button>
+        </div>
+        <div style="font-size:.72rem;color:#888" id="craft-irrig-status"></div>
+      </div>
+
     </div>
 
   </div>
@@ -1037,12 +1099,14 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (placingScarecrow) cancelScarecrowPlacement();
     if (placingFoxDecoy) cancelFoxDecoyPlacement();
+    if (irrigPlaceMode) cancelIrrigPlacement();
     if (cameraFocusSelecting || cameraFocusActive) endCameraFocus();
   }
 });
 canvas.addEventListener('contextmenu', e => {
   if (placingScarecrow) { e.preventDefault(); cancelScarecrowPlacement(); }
   if (placingFoxDecoy) { e.preventDefault(); cancelFoxDecoyPlacement(); }
+  if (irrigPlaceMode) { e.preventDefault(); cancelIrrigPlacement(); }
 });
 
 window.addEventListener('resize', () => {
@@ -1540,46 +1604,52 @@ function drainStamina(amount) {
 
 function onStaminaExhausted() {
   showTip('😴 You are exhausted! Sleeping until morning…');
+  const wasCaffeineCrash = coffeeOvercaffeinated;
 
-  // Jump to start of next day
-  dayPhase = 0.11;   // deep pre-dawn — dark sky, just before first light
-  dayCount++;
-  document.getElementById('day').textContent = dayCount;
-  tickObstacleGrowth();
-  tickWeatherDay();
-  checkRoboticsUnlock();
-  checkBlacksmithUnlock();
-  checkUniversityUnlock();
-  checkBakeryUnlock();
-  checkUpgradeCompletion();
+  sleepFadeTransition(() => {
+    // Capture current phase before advancing
+    overnightGrowthCatchUp();
+    teleportAnimalsToShelters();
 
-  // Reset mine to floor 1
-  mineLevel = 1;
-  closeRopeBubbles();
-  if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
-  mineRopePos = null;
-  if (mineTileGrid.length > 0) {
-    generateMineLevel(mineLevel);
-    initMineBats();
-  }
+    // Jump to start of next day
+    dayPhase = 0.11;
+    dayCount++;
+    document.getElementById('day').textContent = dayCount;
+    tickObstacleGrowth();
+    tickWeatherDay();
+    checkRoboticsUnlock();
+    checkBlacksmithUnlock();
+    checkUniversityUnlock();
+    checkBakeryUnlock();
+    checkUpgradeCompletion();
 
-  // Exhausted without sleeping — 50% if overcaffeinated, else 75%
-  closeBarnSleep();
-  const exhaustPct = coffeeOvercaffeinated ? 0.50 : 0.75;
-  if (coffeeOvercaffeinated) showTip('😵 Caffeine crash! You start the day at 50% stamina.');
-  stamina = Math.floor(STAMINA_MAX * exhaustPct);
-  coffeeOvercaffeinated = false;
-  coffeesToday = 0;
-  _coffeeLastDay = dayCount;
-  teaOvercaffeinated = false;
-  teaToday = 0;
-  _teaLastDay = dayCount;
-  _staminaExhausted = false;
-  _tiredWarningShown = false;
-  updateStaminaUI();
+    // Reset mine to floor 1
+    mineLevel = 1;
+    closeRopeBubbles();
+    if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
+    mineRopePos = null;
+    if (mineTileGrid.length > 0) {
+      generateMineLevel(mineLevel);
+      initMineBats();
+    }
 
-  // Play sunrise jingle (needs audio context unlocked)
-  ensureAudio().then(() => sndSunrise());
+    // Exhausted without sleeping — 50% if overcaffeinated, else 75%
+    closeBarnSleep();
+    const exhaustPct = wasCaffeineCrash ? 0.50 : 0.75;
+    stamina = Math.floor(STAMINA_MAX * exhaustPct);
+    coffeeOvercaffeinated = false;
+    coffeesToday = 0;
+    _coffeeLastDay = dayCount;
+    teaOvercaffeinated = false;
+    teaToday = 0;
+    _teaLastDay = dayCount;
+    _staminaExhausted = false;
+    _tiredWarningShown = false;
+    updateStaminaUI();
+  }, () => {
+    if (wasCaffeineCrash) showTip('😵 Caffeine crash! You start the day at 50% stamina.');
+    ensureAudio().then(() => sndSunrise());
+  });
 }
 
 let currentView    = 'farm'; // 'farm' | 'town'
@@ -3253,8 +3323,8 @@ function tickObstacleGrowth() {
     // ---- Crop decomposition / destruction ----
     if (d.state === ST.READY && d.cropKey) {
       if (!d.readyDay) d.readyDay = dayCount; // safety: set if missing
-      if (dayCount - d.readyDay >= 1) {
-        // Transition to decomposed
+      if (dayCount - d.readyDay >= 2) {
+        // Transition to decomposed (crops last 1 extra day)
         d.state      = ST.DECOMPOSED;
         d.decomposeDay = dayCount;
         tile.material.color.setHex(SOIL_COL[ST.DECOMPOSED]);
@@ -6742,6 +6812,494 @@ function checkFoxDecoyDistract(fox, now) {
   return true;
 }
 
+// ================================================================
+//  IRRIGATION SYSTEM
+// ================================================================
+let irrigPump      = null;   // { mesh, wx, wz }
+const irrigPipes   = [];     // [{ mesh, startX, startZ, endX, endZ, copperCost }]
+const irrigJoints  = [];     // [{ mesh, wx, wz }]
+const irrigSprinklers = [];  // [{ mesh, wx, wz, radiusMesh }]
+let irrigPlaceMode = null;   // null | 'pump' | 'pipe' | 'joint' | 'sprinkler' | 'delete'
+let irrigPipeStart = null;   // {x,z} when placing pipe — first click
+let irrigGhost     = null;   // ghost mesh during placement
+let irrigPipeGhostLine = null; // line preview during pipe placement
+const SPRINKLER_RADIUS = 2.0;
+let _irrigWateredToday = -1; // dayCount of last auto-water
+
+function makeIrrigPumpMesh(ghost) {
+  const grp = new THREE.Group();
+  // Base cylinder
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.35, 0.4, 0.5, 8),
+    new THREE.MeshLambertMaterial({ color: 0x3366AA, transparent: ghost, opacity: ghost ? 0.5 : 1 })
+  );
+  base.position.y = 0.25;
+  grp.add(base);
+  // Pipe outlet
+  const outlet = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.4, 6),
+    new THREE.MeshLambertMaterial({ color: 0xCC7733, transparent: ghost, opacity: ghost ? 0.5 : 1 })
+  );
+  outlet.rotation.z = Math.PI / 2;
+  outlet.position.set(0.35, 0.35, 0);
+  grp.add(outlet);
+  // Handle
+  const handle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.3, 0.06),
+    new THREE.MeshLambertMaterial({ color: 0x888888, transparent: ghost, opacity: ghost ? 0.5 : 1 })
+  );
+  handle.position.set(0, 0.6, 0);
+  grp.add(handle);
+  grp.userData.isIrrigation = true;
+  grp.userData.irrigType = 'pump';
+  return grp;
+}
+
+function makeIrrigPipeMesh(sx, sz, ex, ez, ghost) {
+  const dx = ex - sx, dz = ez - sz;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) return null;
+  const mat = new THREE.MeshLambertMaterial({ color: 0xCC7733, transparent: ghost || false, opacity: ghost ? 0.4 : 1 });
+  // CylinderGeometry extends along Y — rotate so it lies flat along XZ direction
+  const grp = new THREE.Group();
+  const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, len, 6), mat);
+  inner.rotation.x = Math.PI / 2;
+  inner.position.z = len / 2;
+  grp.add(inner);
+  grp.position.set(sx, 0.08, sz);
+  grp.rotation.y = Math.atan2(dx, dz);
+  grp.userData.isIrrigation = true;
+  grp.userData.irrigType = 'pipe';
+  return grp;
+}
+
+function makeIrrigJointMesh(ghost) {
+  const grp = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0x999999, transparent: ghost, opacity: ghost ? 0.5 : 1 });
+  // Center hub
+  const hub = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), mat);
+  hub.position.y = 0.08;
+  grp.add(hub);
+  // 4 stubs
+  const stubGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.2, 6);
+  for (let i = 0; i < 4; i++) {
+    const stub = new THREE.Mesh(stubGeo, mat);
+    stub.rotation.x = Math.PI / 2;
+    stub.position.set(
+      Math.cos(i * Math.PI / 2) * 0.15,
+      0.08,
+      Math.sin(i * Math.PI / 2) * 0.15
+    );
+    stub.rotation.y = i * Math.PI / 2;
+    grp.add(stub);
+  }
+  grp.userData.isIrrigation = true;
+  grp.userData.irrigType = 'joint';
+  return grp;
+}
+
+function makeIrrigSprinklerMesh(ghost) {
+  const grp = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0x33AA55, transparent: ghost, opacity: ghost ? 0.5 : 1 });
+  // Post
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 6), mat);
+  post.position.y = 0.25;
+  grp.add(post);
+  // Head
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), mat);
+  head.position.y = 0.52;
+  grp.add(head);
+  // Spray nozzles
+  for (let i = 0; i < 4; i++) {
+    const noz = new THREE.Mesh(
+      new THREE.ConeGeometry(0.03, 0.08, 4),
+      new THREE.MeshLambertMaterial({ color: 0x55CC77, transparent: ghost, opacity: ghost ? 0.5 : 1 })
+    );
+    noz.rotation.z = Math.PI / 2;
+    noz.position.set(
+      Math.cos(i * Math.PI / 2) * 0.12,
+      0.52,
+      Math.sin(i * Math.PI / 2) * 0.12
+    );
+    noz.rotation.y = i * Math.PI / 2;
+    grp.add(noz);
+  }
+  grp.userData.isIrrigation = true;
+  grp.userData.irrigType = 'sprinkler';
+  return grp;
+}
+
+function makeSprinklerRadiusMesh() {
+  const geo = new THREE.RingGeometry(SPRINKLER_RADIUS - 0.05, SPRINKLER_RADIUS, 32);
+  const mat = new THREE.MeshBasicMaterial({ color: 0x44AAFF, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(geo, mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.02;
+  return ring;
+}
+
+// ---- Pipe connectivity check ----
+function isConnectedToPump(wx, wz) {
+  if (!irrigPump) return false;
+  // BFS along pipes/joints starting from pump
+  const visited = new Set();
+  const queue = [{ x: irrigPump.wx, z: irrigPump.wz }];
+  visited.add(`${irrigPump.wx.toFixed(2)},${irrigPump.wz.toFixed(2)}`);
+
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (Math.hypot(cur.x - wx, cur.z - wz) < 0.3) return true;
+
+    // Check pipes: if pipe start or end is near cur, the other end is reachable
+    for (const pipe of irrigPipes) {
+      const sk = `${pipe.startX.toFixed(2)},${pipe.startZ.toFixed(2)}`;
+      const ek = `${pipe.endX.toFixed(2)},${pipe.endZ.toFixed(2)}`;
+      if (Math.hypot(pipe.startX - cur.x, pipe.startZ - cur.z) < 0.3) {
+        if (!visited.has(ek)) { visited.add(ek); queue.push({ x: pipe.endX, z: pipe.endZ }); }
+      }
+      if (Math.hypot(pipe.endX - cur.x, pipe.endZ - cur.z) < 0.3) {
+        if (!visited.has(sk)) { visited.add(sk); queue.push({ x: pipe.startX, z: pipe.startZ }); }
+      }
+    }
+  }
+  return false;
+}
+
+function findNearestPipeOrJointEnd(wx, wz, exclude) {
+  // Returns the nearest pipe endpoint or joint position within 0.3 distance
+  let best = null, bestDist = 0.3;
+  // Pump outlet
+  if (irrigPump) {
+    const d = Math.hypot(irrigPump.wx - wx, irrigPump.wz - wz);
+    if (d < bestDist) { bestDist = d; best = { x: irrigPump.wx, z: irrigPump.wz }; }
+  }
+  // Pipe endpoints
+  for (const p of irrigPipes) {
+    if (p === exclude) continue;
+    for (const pt of [{ x: p.startX, z: p.startZ }, { x: p.endX, z: p.endZ }]) {
+      const d = Math.hypot(pt.x - wx, pt.z - wz);
+      if (d < bestDist) { bestDist = d; best = pt; }
+    }
+  }
+  // Joints
+  for (const j of irrigJoints) {
+    const d = Math.hypot(j.wx - wx, j.wz - wz);
+    if (d < bestDist) { bestDist = d; best = { x: j.wx, z: j.wz }; }
+  }
+  return best;
+}
+
+// ---- Placement functions ----
+function cancelIrrigPlacement() {
+  if (!irrigPlaceMode) return;
+  // Refund resources for items that deduct on craft
+  if (irrigPlaceMode === 'pump' && !irrigPump) {
+    materials.copper += 10; materials.rock += 5; materials.silver += 2;
+    updateMaterialsUI();
+  } else if (irrigPlaceMode === 'joint') {
+    materials.copper += 3; materials.rock += 2;
+    updateMaterialsUI();
+  } else if (irrigPlaceMode === 'sprinkler') {
+    materials.copper += 5; materials.rock += 3; materials.silver += 1;
+    updateMaterialsUI();
+  }
+  irrigPlaceMode = null;
+  irrigPipeStart = null;
+  if (irrigGhost) { scene.remove(irrigGhost); irrigGhost = null; }
+  if (irrigPipeGhostLine) { scene.remove(irrigPipeGhostLine); irrigPipeGhostLine = null; }
+  canvas.style.cursor = 'default';
+  showTip('💧 Irrigation placement cancelled.');
+}
+
+function craftPump() {
+  if (irrigPump) { showTip('⚠️ Pump already built!'); return; }
+  if (materials.copper < 10 || materials.rock < 5 || materials.silver < 2) {
+    showTip('⚠️ Need 10🟠 copper, 5🪨 rock, 2⚪ silver'); return;
+  }
+  materials.copper -= 10; materials.rock -= 5; materials.silver -= 2;
+  updateMaterialsUI();
+  irrigPlaceMode = 'pump';
+  irrigGhost = makeIrrigPumpMesh(true);
+  irrigGhost.position.set(POND_X, 0, POND_Z);
+  scene.add(irrigGhost);
+  document.getElementById('crafting-overlay').style.display = 'none';
+  canvas.style.cursor = 'crosshair';
+  showTip('💧 Click on the pond to place the pump. ESC to cancel.');
+}
+
+function craftPipe() {
+  if (!irrigPump) { showTip('⚠️ Build a pump first!'); return; }
+  irrigPlaceMode = 'pipe';
+  irrigPipeStart = null;
+  document.getElementById('crafting-overlay').style.display = 'none';
+  canvas.style.cursor = 'crosshair';
+  showTip('💧 Click start point for pipe (must connect to pump network). Then click end point.');
+}
+
+function craftJoint() {
+  if (!irrigPump) { showTip('⚠️ Build a pump first!'); return; }
+  if (materials.copper < 3 || materials.rock < 2) {
+    showTip('⚠️ Need 3🟠 copper, 2🪨 rock'); return;
+  }
+  materials.copper -= 3; materials.rock -= 2;
+  updateMaterialsUI();
+  irrigPlaceMode = 'joint';
+  irrigGhost = makeIrrigJointMesh(true);
+  scene.add(irrigGhost);
+  document.getElementById('crafting-overlay').style.display = 'none';
+  canvas.style.cursor = 'crosshair';
+  showTip('💧 Click on a pipe to place 4-way joint. ESC to cancel.');
+}
+
+function craftSprinkler() {
+  if (!irrigPump) { showTip('⚠️ Build a pump first!'); return; }
+  if (materials.copper < 5 || materials.rock < 3 || materials.silver < 1) {
+    showTip('⚠️ Need 5🟠 copper, 3🪨 rock, 1⚪ silver'); return;
+  }
+  materials.copper -= 5; materials.rock -= 3; materials.silver -= 1;
+  updateMaterialsUI();
+  irrigPlaceMode = 'sprinkler';
+  irrigGhost = makeIrrigSprinklerMesh(true);
+  scene.add(irrigGhost);
+  document.getElementById('crafting-overlay').style.display = 'none';
+  canvas.style.cursor = 'crosshair';
+  showTip('💧 Click on pipe end or 4-way joint to place sprinkler. ESC to cancel.');
+}
+
+function startIrrigationDelete() {
+  irrigPlaceMode = 'delete';
+  document.getElementById('crafting-overlay').style.display = 'none';
+  canvas.style.cursor = 'crosshair';
+  showTip('🗑️ Click any irrigation item to remove it (50% resources back). ESC to cancel.');
+}
+
+function handleIrrigationClick(pos) {
+  if (!irrigPlaceMode || !pos) return false;
+
+  if (irrigPlaceMode === 'pump') {
+    // Must be on the pond
+    const dist = Math.hypot(pos.x - POND_X, pos.z - POND_Z);
+    if (dist > 1.8) { showTip('⚠️ Pump must be placed on the pond!'); return true; }
+    const mesh = makeIrrigPumpMesh(false);
+    mesh.position.set(pos.x, 0, pos.z);
+    scene.add(mesh);
+    irrigPump = { mesh, wx: pos.x, wz: pos.z };
+    if (irrigGhost) { scene.remove(irrigGhost); irrigGhost = null; }
+    irrigPlaceMode = null;
+    canvas.style.cursor = 'default';
+    showTip('💧 Pump placed on the pond! Now build pipes to connect to your farm.');
+    return true;
+  }
+
+  if (irrigPlaceMode === 'pipe') {
+    if (!irrigPipeStart) {
+      // First click — must be near pump or existing pipe/joint end
+      const snap = findNearestPipeOrJointEnd(pos.x, pos.z);
+      if (!snap && !isConnectedToPump(pos.x, pos.z)) {
+        showTip('⚠️ Pipe start must connect to pump or existing pipe network!');
+        return true;
+      }
+      irrigPipeStart = snap || { x: pos.x, z: pos.z };
+      showTip('💧 Start set! Click end point for pipe.');
+      return true;
+    } else {
+      // Second click — end point
+      const sx = irrigPipeStart.x, sz = irrigPipeStart.z;
+      const ex = pos.x, ez = pos.z;
+      const len = Math.hypot(ex - sx, ez - sz);
+      const tileCost = Math.max(1, Math.ceil(len));
+      if (materials.copper < tileCost) {
+        showTip(`⚠️ Need ${tileCost}🟠 copper for this pipe length!`);
+        return true;
+      }
+      materials.copper -= tileCost;
+      updateMaterialsUI();
+      const mesh = makeIrrigPipeMesh(sx, sz, ex, ez, false);
+      if (mesh) {
+        scene.add(mesh);
+        irrigPipes.push({ mesh, startX: sx, startZ: sz, endX: ex, endZ: ez, copperCost: tileCost });
+      }
+      if (irrigPipeGhostLine) { scene.remove(irrigPipeGhostLine); irrigPipeGhostLine = null; }
+      irrigPipeStart = null;
+      irrigPlaceMode = null;
+      canvas.style.cursor = 'default';
+      showTip(`💧 Pipe placed! (${tileCost}🟠 copper used)`);
+      return true;
+    }
+  }
+
+  if (irrigPlaceMode === 'joint') {
+    // Must be near a pipe
+    let nearPipe = false;
+    for (const p of irrigPipes) {
+      // Check if point is close to pipe segment
+      const d = distToSegment(pos.x, pos.z, p.startX, p.startZ, p.endX, p.endZ);
+      if (d < 0.4) { nearPipe = true; break; }
+    }
+    if (!nearPipe) { showTip('⚠️ Joint must be placed on an existing pipe!'); return true; }
+    const mesh = makeIrrigJointMesh(false);
+    mesh.position.set(pos.x, 0, pos.z);
+    scene.add(mesh);
+    irrigJoints.push({ mesh, wx: pos.x, wz: pos.z });
+    if (irrigGhost) { scene.remove(irrigGhost); irrigGhost = null; }
+    irrigPlaceMode = null;
+    canvas.style.cursor = 'default';
+    showTip('💧 4-way joint placed!');
+    return true;
+  }
+
+  if (irrigPlaceMode === 'sprinkler') {
+    // Must be near pipe endpoint or joint
+    let validSpot = false;
+    // Check pipe endpoints
+    for (const p of irrigPipes) {
+      if (Math.hypot(p.endX - pos.x, p.endZ - pos.z) < 0.4) { validSpot = true; break; }
+      if (Math.hypot(p.startX - pos.x, p.startZ - pos.z) < 0.4) { validSpot = true; break; }
+    }
+    // Check joints
+    if (!validSpot) {
+      for (const j of irrigJoints) {
+        if (Math.hypot(j.wx - pos.x, j.wz - pos.z) < 0.4) { validSpot = true; break; }
+      }
+    }
+    if (!validSpot) { showTip('⚠️ Sprinkler must be placed at a pipe end or 4-way joint!'); return true; }
+    // Check connected to pump
+    if (!isConnectedToPump(pos.x, pos.z)) {
+      showTip('⚠️ Sprinkler must be connected to the pump via pipes!'); return true;
+    }
+    const mesh = makeIrrigSprinklerMesh(false);
+    mesh.position.set(pos.x, 0, pos.z);
+    scene.add(mesh);
+    const radiusMesh = makeSprinklerRadiusMesh();
+    radiusMesh.position.set(pos.x, 0.02, pos.z);
+    scene.add(radiusMesh);
+    irrigSprinklers.push({ mesh, wx: pos.x, wz: pos.z, radiusMesh });
+    if (irrigGhost) { scene.remove(irrigGhost); irrigGhost = null; }
+    irrigPlaceMode = null;
+    canvas.style.cursor = 'default';
+    showTip('💧 Sprinkler placed! It will water crops within range each morning.');
+    return true;
+  }
+
+  if (irrigPlaceMode === 'delete') {
+    // Find nearest irrigation item
+    let bestDist = 0.6, bestType = null, bestIdx = -1;
+    if (irrigPump) {
+      const d = Math.hypot(irrigPump.wx - pos.x, irrigPump.wz - pos.z);
+      if (d < bestDist) { bestDist = d; bestType = 'pump'; bestIdx = 0; }
+    }
+    for (let i = 0; i < irrigPipes.length; i++) {
+      const p = irrigPipes[i];
+      const mid = { x: (p.startX + p.endX) / 2, z: (p.startZ + p.endZ) / 2 };
+      const d = distToSegment(pos.x, pos.z, p.startX, p.startZ, p.endX, p.endZ);
+      if (d < bestDist) { bestDist = d; bestType = 'pipe'; bestIdx = i; }
+    }
+    for (let i = 0; i < irrigJoints.length; i++) {
+      const d = Math.hypot(irrigJoints[i].wx - pos.x, irrigJoints[i].wz - pos.z);
+      if (d < bestDist) { bestDist = d; bestType = 'joint'; bestIdx = i; }
+    }
+    for (let i = 0; i < irrigSprinklers.length; i++) {
+      const d = Math.hypot(irrigSprinklers[i].wx - pos.x, irrigSprinklers[i].wz - pos.z);
+      if (d < bestDist) { bestDist = d; bestType = 'sprinkler'; bestIdx = i; }
+    }
+    if (!bestType) { showTip('⚠️ No irrigation item found here!'); return true; }
+
+    // Remove and refund 50%
+    if (bestType === 'pump') {
+      scene.remove(irrigPump.mesh);
+      irrigPump = null;
+      materials.copper += 5; materials.rock += 2; materials.silver += 1;
+      // Also remove all connected items
+      for (const p of irrigPipes) scene.remove(p.mesh);
+      for (const j of irrigJoints) scene.remove(j.mesh);
+      for (const s of irrigSprinklers) { scene.remove(s.mesh); scene.remove(s.radiusMesh); }
+      irrigPipes.length = 0; irrigJoints.length = 0; irrigSprinklers.length = 0;
+      showTip('🗑️ Pump and all pipes removed! +5🟠 +2🪨 +1⚪');
+    } else if (bestType === 'pipe') {
+      const p = irrigPipes[bestIdx];
+      scene.remove(p.mesh);
+      const refund = Math.max(1, Math.floor(p.copperCost * 0.5));
+      materials.copper += refund;
+      irrigPipes.splice(bestIdx, 1);
+      showTip(`🗑️ Pipe removed! +${refund}🟠 copper`);
+    } else if (bestType === 'joint') {
+      scene.remove(irrigJoints[bestIdx].mesh);
+      irrigJoints.splice(bestIdx, 1);
+      materials.copper += 1; materials.rock += 1;
+      showTip('🗑️ Joint removed! +1🟠 +1🪨');
+    } else if (bestType === 'sprinkler') {
+      const s = irrigSprinklers[bestIdx];
+      scene.remove(s.mesh); scene.remove(s.radiusMesh);
+      irrigSprinklers.splice(bestIdx, 1);
+      materials.copper += 2; materials.rock += 1;
+      showTip('🗑️ Sprinkler removed! +2🟠 +1🪨');
+    }
+    updateMaterialsUI();
+    irrigPlaceMode = null;
+    canvas.style.cursor = 'default';
+    return true;
+  }
+
+  return false;
+}
+
+// Distance from point to line segment
+function distToSegment(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az;
+  const lenSq = dx * dx + dz * dz;
+  if (lenSq < 0.001) return Math.hypot(px - ax, pz - az);
+  let t = ((px - ax) * dx + (pz - az) * dz) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
+}
+
+// ---- Sprinkler auto-watering (later morning each day) ----
+function tickIrrigationWatering() {
+  if (!irrigPump || irrigSprinklers.length === 0) return;
+  // Water at dayPhase ~0.20 (later morning)
+  if (dayPhase < 0.18 || dayPhase > 0.25) return;
+  if (_irrigWateredToday === dayCount) return;
+  _irrigWateredToday = dayCount;
+
+  let watered = 0;
+  for (const spr of irrigSprinklers) {
+    // Check connectivity
+    if (!isConnectedToPump(spr.wx, spr.wz)) continue;
+    // Water all crops in radius
+    for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
+      const tile = tileGrid[x][z];
+      const d = tile.userData;
+      // Tile world position
+      const twx = tile.position.x, twz = tile.position.z;
+      if (Math.hypot(twx - spr.wx, twz - spr.wz) > SPRINKLER_RADIUS) continue;
+      if (d.state >= ST.SEEDED && d.state < ST.READY && !d.watered) {
+        d.watered   = true;
+        d.wateredAt = performance.now();
+        d.waterCount++;
+        tile.material.color.setHex(0x201008);
+        watered++;
+      }
+    }
+    // Visual spray effect
+    showSprinklerSpray(spr);
+  }
+  if (watered > 0) showTip(`💧 Sprinklers watered ${watered} crop${watered > 1 ? 's' : ''}!`);
+}
+
+function showSprinklerSpray(spr) {
+  // Brief particle-like visual: pulse the radius ring
+  if (spr.radiusMesh) {
+    spr.radiusMesh.material.opacity = 0.5;
+    spr.radiusMesh.material.color.setHex(0x66CCFF);
+    setTimeout(() => {
+      if (spr.radiusMesh) {
+        spr.radiusMesh.material.opacity = 0.25;
+        spr.radiusMesh.material.color.setHex(0x44AAFF);
+      }
+    }, 2000);
+  }
+}
+
 function openCraftingMenu() {
   document.getElementById('craft-poop-have').textContent  = materials.poop;
   document.getElementById('craft-pm-have').textContent    = materials.plantMatter;
@@ -6776,6 +7334,37 @@ function openCraftingMenu() {
   document.getElementById('craft-fd-status').textContent = placingFoxDecoy
     ? '📍 click outside farm to place, ESC to cancel'
     : 'ready to craft';
+
+  // Irrigation section
+  const irrigSec = document.getElementById('craft-irrigation-section');
+  if (engSkills.irrigation) {
+    irrigSec.style.display = '';
+    const pumpBtn = document.getElementById('craft-pump-btn');
+    const canPump = !irrigPump && materials.copper >= 10 && materials.rock >= 5 && materials.silver >= 2;
+    pumpBtn.disabled = !canPump || !!irrigPump;
+    pumpBtn.style.opacity = canPump ? '1' : '0.45';
+    if (irrigPump) pumpBtn.textContent = '✅';
+
+    const pipeBtn = document.getElementById('craft-pipe-btn');
+    pipeBtn.disabled = !irrigPump;
+    pipeBtn.style.opacity = irrigPump ? '1' : '0.45';
+
+    const jointBtn = document.getElementById('craft-joint-btn');
+    const canJoint = materials.copper >= 3 && materials.rock >= 2;
+    jointBtn.disabled = !canJoint || !irrigPump;
+    jointBtn.style.opacity = (canJoint && irrigPump) ? '1' : '0.45';
+
+    const sprinkBtn = document.getElementById('craft-sprinkler-btn');
+    const canSprink = materials.copper >= 5 && materials.rock >= 3 && materials.silver >= 1;
+    sprinkBtn.disabled = !canSprink || !irrigPump;
+    sprinkBtn.style.opacity = (canSprink && irrigPump) ? '1' : '0.45';
+
+    const statusEl = document.getElementById('craft-irrig-status');
+    if (irrigPlaceMode) statusEl.textContent = '📍 ' + irrigPlaceMode + ' mode — click to place, ESC to cancel';
+    else statusEl.textContent = '';
+  } else {
+    irrigSec.style.display = 'none';
+  }
 
   document.getElementById('crafting-overlay').style.display = 'flex';
 }
@@ -8538,6 +9127,13 @@ canvas.addEventListener('click', async e => {
     return;
   }
 
+  // Irrigation placement mode
+  if (irrigPlaceMode) {
+    if (e.button !== 0) { cancelIrrigPlacement(); return; }
+    const pos = worldPosFromMouse(e);
+    if (handleIrrigationClick(pos)) return;
+  }
+
   const r = canvas.getBoundingClientRect();
   mouse.x = ((e.clientX - r.left) / r.width)  *  2 - 1;
   mouse.y = ((e.clientY - r.top)  / r.height) * -2 + 1;
@@ -8758,6 +9354,25 @@ canvas.addEventListener('mousemove', e => {
     return;
   }
 
+  // Irrigation ghost follows cursor
+  if (irrigPlaceMode && irrigPlaceMode !== 'delete') {
+    const pos = worldPosFromMouse(e);
+    if (pos) {
+      if (irrigGhost) {
+        irrigGhost.position.x = pos.x;
+        irrigGhost.position.z = pos.z;
+      }
+      // Pipe preview line from start to cursor
+      if (irrigPlaceMode === 'pipe' && irrigPipeStart) {
+        if (irrigPipeGhostLine) scene.remove(irrigPipeGhostLine);
+        irrigPipeGhostLine = makeIrrigPipeMesh(irrigPipeStart.x, irrigPipeStart.z, pos.x, pos.z, true);
+        if (irrigPipeGhostLine) scene.add(irrigPipeGhostLine);
+      }
+    }
+    canvas.style.cursor = 'crosshair';
+    return;
+  }
+
   const r2 = canvas.getBoundingClientRect();
   mouse.x = ((e.clientX - r2.left) / r2.width)  *  2 - 1;
   mouse.y = ((e.clientY - r2.top)  / r2.height) * -2 + 1;
@@ -8845,6 +9460,7 @@ function animate(now) {
     tickEggcavator(now);
     tickAutoMower(now);
     tickDrone(now);
+    tickIrrigationWatering();
     tickCameraFocus(now);
     tickBlightBugs(now);
     tickRainbow(now);
@@ -10453,36 +11069,117 @@ function closeBarnSleep() {
     .forEach(id => { document.getElementById(id).style.display = 'none'; });
 }
 
+// ---- DAWN HELPERS: teleport animals, growth catch-up, fade ----
+
+function teleportAnimalsToShelters() {
+  // Cows → barn
+  const barnX = cowBarnMesh ? cowBarnMesh.position.x + 0.5 : 0;
+  const barnZ = cowBarnMesh ? cowBarnMesh.position.z       : 0;
+  for (const cow of cows) {
+    if (ufoActive && ufoTargetCow === cow) continue;
+    cow.mesh.position.x = barnX + (Math.random() - 0.5) * 0.8;
+    cow.mesh.position.z = barnZ + (Math.random() - 0.5) * 0.8;
+    cow.wx = cow.mesh.position.x;
+    cow.wz = cow.mesh.position.z;
+  }
+  // Chickens → coop
+  for (const ch of chickens) {
+    ch.mesh.position.x = COOP_X + (Math.random() - 0.5) * 0.6;
+    ch.mesh.position.z = COOP_Z + (Math.random() - 0.5) * 0.6;
+  }
+  // Pigs → sty
+  const styX = pigStyMesh ? pigStyMesh.position.x + 0.3 : -3;
+  const styZ = pigStyMesh ? pigStyMesh.position.z       : 7;
+  for (const pig of pigs) {
+    pig.mesh.position.x = styX + (Math.random() - 0.5) * 0.8;
+    pig.mesh.position.z = styZ + (Math.random() - 0.5) * 0.8;
+    pig.wx = pig.mesh.position.x;
+    pig.wz = pig.mesh.position.z;
+  }
+}
+
+function overnightGrowthCatchUp() {
+  // remaining time in the day that was skipped, scaled by 15%
+  const remainingMs = (1.0 - dayPhase) * DAY_DURATION * 0.15;
+
+  // Advance crop growth timers (subtract time to make them closer to threshold)
+  for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) {
+    const d = tileGrid[x][z].userData;
+    if (d.state >= ST.SEEDED && d.state < ST.READY && d.growTimer) {
+      d.growTimer -= remainingMs;
+    }
+  }
+
+  // Advance animal growth (subtract from spawnTime to make them "older")
+  for (const cow of cows) {
+    cow.spawnTime -= remainingMs;
+  }
+  for (const ch of chickens) {
+    ch.spawnTime -= remainingMs;
+  }
+  for (const pig of pigs) {
+    pig.spawnTime -= remainingMs;
+  }
+}
+
+function sleepFadeTransition(duringFn, afterFn) {
+  const overlay = document.getElementById('sleep-fade-overlay');
+  overlay.style.pointerEvents = 'all'; // block clicks during transition
+  // Fade to black
+  overlay.classList.remove('fade-out');
+  overlay.classList.add('fade-in');
+
+  setTimeout(() => {
+    // While black: run the dawn logic
+    duringFn();
+    // Hold black briefly for "passage of time" feel
+    setTimeout(() => {
+      // Fade back in
+      overlay.classList.remove('fade-in');
+      overlay.classList.add('fade-out');
+      overlay.style.pointerEvents = 'none';
+      if (afterFn) afterFn();
+    }, 600);
+  }, 800); // wait for fade-to-black to complete
+}
+
 function doSleep() {
   closeBarnSleep();
-  dayPhase = 0.11;
-  dayCount++;
-  document.getElementById('day').textContent = dayCount;
-  tickObstacleGrowth();
-  tickWeatherDay();
-  checkRoboticsUnlock();
-  checkBlacksmithUnlock();
-  checkUniversityUnlock();
-  checkBakeryUnlock();
-  checkUpgradeCompletion();
-  mineLevel = 1;
-  closeRopeBubbles();
-  if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
-  mineRopePos = null;
-  if (mineTileGrid.length > 0) { generateMineLevel(mineLevel); initMineBats(); }
-  // Slept → full stamina, clear caffeine
-  stamina = STAMINA_MAX;
-  coffeeOvercaffeinated = false;
-  coffeesToday = 0;
-  _coffeeLastDay = dayCount;
-  teaOvercaffeinated = false;
-  teaToday = 0;
-  _teaLastDay = dayCount;
-  _staminaExhausted = false;
-  _tiredWarningShown = false;
-  updateStaminaUI();
-  showTip('😴 You slept well! Ready for a new day! ☀️');
-  ensureAudio().then(() => sndSunrise());
+  sleepFadeTransition(() => {
+    // Capture current phase before advancing
+    overnightGrowthCatchUp();
+    teleportAnimalsToShelters();
+
+    dayPhase = 0.11;
+    dayCount++;
+    document.getElementById('day').textContent = dayCount;
+    tickObstacleGrowth();
+    tickWeatherDay();
+    checkRoboticsUnlock();
+    checkBlacksmithUnlock();
+    checkUniversityUnlock();
+    checkBakeryUnlock();
+    checkUpgradeCompletion();
+    mineLevel = 1;
+    closeRopeBubbles();
+    if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
+    mineRopePos = null;
+    if (mineTileGrid.length > 0) { generateMineLevel(mineLevel); initMineBats(); }
+    // Slept → full stamina, clear caffeine
+    stamina = STAMINA_MAX;
+    coffeeOvercaffeinated = false;
+    coffeesToday = 0;
+    _coffeeLastDay = dayCount;
+    teaOvercaffeinated = false;
+    teaToday = 0;
+    _teaLastDay = dayCount;
+    _staminaExhausted = false;
+    _tiredWarningShown = false;
+    updateStaminaUI();
+  }, () => {
+    showTip('😴 You slept well! Ready for a new day! ☀️');
+    ensureAudio().then(() => sndSunrise());
+  });
 }
 
 // Wire up bubble clicks
@@ -11242,11 +11939,16 @@ function switchToTown() {
   if (autoMower) autoMower.mesh.visible = false;
   scarecrows.forEach(sc => { sc.mesh.visible = false; });
   foxDecoys.forEach(fd => { fd.mesh.visible = false; });
+  if (irrigPump) irrigPump.mesh.visible = false;
+  irrigPipes.forEach(p => { p.mesh.visible = false; });
+  irrigJoints.forEach(j => { j.mesh.visible = false; });
+  irrigSprinklers.forEach(s => { s.mesh.visible = false; s.radiusMesh.visible = false; });
   if (siloGroup) siloGroup.visible = false;
   cows.forEach(c => { if (c.milkBubble) c.milkBubble.style.display = 'none'; });
   if (dog) { dog.mesh.visible = false; dog.houseMesh.visible = false; if (dog.barkBubble) dog.barkBubble.style.display = 'none'; }
   if (placingScarecrow) cancelScarecrowPlacement();
   if (placingFoxDecoy) cancelFoxDecoyPlacement();
+  if (irrigPlaceMode) cancelIrrigPlacement();
   document.getElementById('btn-farm').classList.remove('active-scene');
   document.getElementById('btn-town').classList.add('active-scene');
   showTip('🏘️ Click a building to enter!', false);
@@ -11286,6 +11988,10 @@ function switchToFarm() {
   if (autoMower) autoMower.mesh.visible = true;
   scarecrows.forEach(sc => { sc.mesh.visible = true; });
   foxDecoys.forEach(fd => { fd.mesh.visible = true; });
+  if (irrigPump) irrigPump.mesh.visible = true;
+  irrigPipes.forEach(p => { p.mesh.visible = true; });
+  irrigJoints.forEach(j => { j.mesh.visible = true; });
+  irrigSprinklers.forEach(s => { s.mesh.visible = true; s.radiusMesh.visible = true; });
   if (siloGroup) siloGroup.visible = true;
   if (dog) { dog.mesh.visible = true; dog.houseMesh.visible = true; }
   document.getElementById('supply-overlay').style.display = 'none';
@@ -11991,6 +12697,7 @@ const bioSkills = {
 const engSkills = {
   taskScheduler:  false,
   cropHarvesting: false,
+  irrigation:     false,
 };
 let _uniTab = 'biology';
 
@@ -12032,8 +12739,10 @@ function renderBioTree() {
   function card(id, title, desc, costHtml, unlocked, canBuy, prereqMet) {
     const cls = unlocked ? 'uni-skill unlocked' : (prereqMet ? 'uni-skill' : 'uni-skill locked');
     const badge = unlocked ? '<span style="color:#88ff88;font-weight:700;float:right">✅</span>' : '';
+    const disabledAttr = canBuy ? '' : 'disabled';
+    const opacity = canBuy ? '1' : '0.45';
     const btn = (!unlocked && prereqMet)
-      ? `<button class="shop-buy-btn" style="margin-top:5px;font-size:.78rem" ${canBuy?'':'disabled style="margin-top:5px;font-size:.78rem;opacity:.45"'} onclick="unlockBioSkill('${id}')">Research</button>`
+      ? `<button class="shop-buy-btn" style="margin-top:5px;font-size:.78rem;opacity:${opacity}" ${disabledAttr} onclick="unlockBioSkill('${id}')">Research</button>`
       : '';
     return `<div class="${cls}"><div class="uni-skill-title">${title}${badge}</div><div class="uni-skill-desc">${desc}</div><div class="uni-skill-cost">${costHtml}</div>${btn}</div>`;
   }
@@ -12102,12 +12811,15 @@ function renderEngTree() {
   const panel = document.getElementById('uni-panel-engineering');
   const sched = engSkills.taskScheduler;
   const harv  = engSkills.cropHarvesting;
+  const irrig = engSkills.irrigation;
 
   function card(id, title, desc, costHtml, unlocked, canBuy, prereqMet) {
     const cls = unlocked ? 'uni-skill unlocked' : (prereqMet ? 'uni-skill' : 'uni-skill locked');
     const badge = unlocked ? '<span style="color:#88ff88;font-weight:700;float:right">✅</span>' : '';
+    const disabledAttr = canBuy ? '' : 'disabled';
+    const opacity = canBuy ? '1' : '0.45';
     const btn = (!unlocked && prereqMet)
-      ? `<button class="shop-buy-btn" style="margin-top:5px;font-size:.78rem" ${canBuy?'':'disabled style="margin-top:5px;font-size:.78rem;opacity:.45"'} onclick="unlockEngSkill('${id}')">Research</button>`
+      ? `<button class="shop-buy-btn" style="margin-top:5px;font-size:.78rem;opacity:${opacity}" ${disabledAttr} onclick="unlockEngSkill('${id}')">Research</button>`
       : '';
     return `<div class="${cls}"><div class="uni-skill-title">${title}${badge}</div><div class="uni-skill-desc">${desc}</div><div class="uni-skill-cost">${costHtml}</div>${btn}</div>`;
   }
@@ -12118,7 +12830,11 @@ function renderEngTree() {
   const harvCost = '150🪙 + 6🟠 copper';
   const harvCan  = gold >= 150 && materials.copper >= 6;
 
+  const irrigCost = '150🪙 + 5⚪ silver + 20🟠 copper + 40🪨 rock';
+  const irrigCan  = gold >= 150 && materials.silver >= 5 && materials.copper >= 20 && materials.rock >= 40;
+
   let html = '';
+
   // Root: Task Scheduler
   html += card('taskScheduler', '📋 Task Scheduler',
     'Unlocks drone task management — assign tasks to your drone.',
@@ -12130,7 +12846,9 @@ function renderEngTree() {
     html += '<div>' + card('cropHarvesting', '🌾 Crop Harvesting',
       'Drone can be assigned to automatically harvest ripe crops.',
       harvCost, harv, harvCan, true) + '</div>';
-    html += '<div><div class="uni-skill locked"><div class="uni-skill-title">🔒 ???</div><div class="uni-skill-desc">Future research</div></div></div>';
+    html += '<div>' + card('irrigation', '💧 Irrigation',
+      'Unlocks irrigation crafting — build pipes, pumps & sprinklers to auto-water crops.',
+      irrigCost, irrig, irrigCan, true) + '</div>';
     html += '</div>';
   } else {
     html += '<div style="text-align:center;color:#555;font-size:.75rem;margin-top:6px">🔒 Further research locked — unlock Task Scheduler first</div>';
@@ -12152,6 +12870,12 @@ function unlockEngSkill(id) {
     gold -= 150; materials.copper -= 6;
     engSkills.cropHarvesting = true;
     showTip('🌾 Crop Harvesting researched! Your drone can now harvest crops.');
+  } else if (id === 'irrigation') {
+    if (!engSkills.taskScheduler || engSkills.irrigation) return;
+    if (gold < 150 || materials.silver < 5 || materials.copper < 20 || materials.rock < 40) { showTip('⚠️ Not enough resources!'); return; }
+    gold -= 150; materials.silver -= 5; materials.copper -= 20; materials.rock -= 40;
+    engSkills.irrigation = true;
+    showTip('💧 Irrigation researched! Check the Crafting menu for irrigation items.');
   }
   updateGoldUI();
   updateMaterialsUI();
