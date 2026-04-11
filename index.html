@@ -852,6 +852,41 @@
   </div>
 </div>
 
+<!-- Spelunker Bunker Overlay -->
+<div class="shop-overlay" id="spelunker-overlay">
+  <div class="shop-modal">
+    <button class="shop-close-btn" onclick="document.getElementById('spelunker-overlay').style.display='none'">✕</button>
+    <div class="shop-title">⛏️ Spelunker Bunker</div>
+
+    <div class="shop-section">
+      <h4>🧴 Centipede Repellent</h4>
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:4px">
+        <span style="font-size:.82rem;color:#ccc;line-height:1.5">
+          Spray yourself to reduce centipede encounters for the next 5 mine levels. Requires backpack.
+        </span>
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between;margin-top:4px">
+          <span style="font-size:.9rem" id="spelunk-repel-status"></span>
+          <button class="shop-buy-btn" id="spelunk-repel-btn" onclick="buyRepellent()" style="background:rgba(60,140,60,.85)">Buy 30🪙</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="shop-section">
+      <h4>💣 Bomb</h4>
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:4px">
+        <span style="font-size:.82rem;color:#ccc;line-height:1.5">
+          Place in the mine to blast rocks in a 4-tile radius. Collect resources from destroyed rocks. Requires backpack.
+        </span>
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between;margin-top:4px">
+          <span style="font-size:.9rem" id="spelunk-bomb-status"></span>
+          <button class="shop-buy-btn" id="spelunk-bomb-btn" onclick="buyBomb()" style="background:rgba(160,60,30,.85)">Buy 50🪙</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <!-- Blacksmith Overlay -->
 <div class="shop-overlay" id="blacksmith-overlay">
   <div class="shop-modal">
@@ -1100,6 +1135,7 @@ window.addEventListener('keydown', e => {
     if (placingScarecrow) cancelScarecrowPlacement();
     if (placingFoxDecoy) cancelFoxDecoyPlacement();
     if (irrigPlaceMode) cancelIrrigPlacement();
+    if (placingBomb) cancelBombPlacement();
     if (cameraFocusSelecting || cameraFocusActive) endCameraFocus();
   }
 });
@@ -1107,6 +1143,7 @@ canvas.addEventListener('contextmenu', e => {
   if (placingScarecrow) { e.preventDefault(); cancelScarecrowPlacement(); }
   if (placingFoxDecoy) { e.preventDefault(); cancelFoxDecoyPlacement(); }
   if (irrigPlaceMode) { e.preventDefault(); cancelIrrigPlacement(); }
+  if (placingBomb) { e.preventDefault(); cancelBombPlacement(); }
 });
 
 window.addEventListener('resize', () => {
@@ -1486,9 +1523,19 @@ function tickDroplets() {
   for (let i=droplets.length-1; i>=0; i--) {
     const d=droplets[i];
     d.userData.age += 0.04;
-    d.position.y   -= d.userData.vy;
-    d.material.opacity = Math.max(0, 0.9 - d.userData.age);
-    if (d.userData.age>1.2) { scene.remove(d); droplets.splice(i,1); }
+    if (d.userData.isSprinklerDrop) {
+      // Arc: lateral spread + gravity
+      d.position.x += d.userData.vx;
+      d.position.z += d.userData.vz;
+      d.userData.vy -= 0.004; // gravity
+      d.position.y  += d.userData.vy;
+      d.material.opacity = Math.max(0, 0.85 - d.userData.age * 0.6);
+      if (d.position.y < 0 || d.userData.age > 2.5) { scene.remove(d); droplets.splice(i,1); }
+    } else {
+      d.position.y -= d.userData.vy;
+      d.material.opacity = Math.max(0, 0.9 - d.userData.age);
+      if (d.userData.age > 1.2) { scene.remove(d); droplets.splice(i,1); }
+    }
   }
 }
 
@@ -6339,7 +6386,7 @@ function makeBeehiveMesh(stage) {
   const scale = stage === 0 ? 0.38 : stage === 1 ? 0.68 : 1.0;
 
   // Main teardrop body
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), hiveMat.clone());
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 8), hiveMat.clone());
   body.scale.set(scale, scale * 1.35, scale);
   body.position.y = 0;
   g.add(body);
@@ -6348,10 +6395,10 @@ function makeBeehiveMesh(stage) {
     // Dark horizontal banding rings
     for (let r = 0; r < 3; r++) {
       const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(0.28 * scale, 0.035 * scale, 5, 12),
+        new THREE.TorusGeometry(0.38 * scale, 0.045 * scale, 5, 12),
         darkMat.clone()
       );
-      ring.position.y = (r - 1) * 0.14 * scale;
+      ring.position.y = (r - 1) * 0.18 * scale;
       ring.rotation.x = Math.PI / 2;
       g.add(ring);
     }
@@ -6841,7 +6888,7 @@ function makeIrrigPumpMesh(ghost) {
     new THREE.MeshLambertMaterial({ color: 0xCC7733, transparent: ghost, opacity: ghost ? 0.5 : 1 })
   );
   outlet.rotation.z = Math.PI / 2;
-  outlet.position.set(0.35, 0.35, 0);
+  outlet.position.set(-0.35, 0.35, 0);
   grp.add(outlet);
   // Handle
   const handle = new THREE.Mesh(
@@ -7287,7 +7334,7 @@ function tickIrrigationWatering() {
 }
 
 function showSprinklerSpray(spr) {
-  // Brief particle-like visual: pulse the radius ring
+  // Pulse the radius ring
   if (spr.radiusMesh) {
     spr.radiusMesh.material.opacity = 0.5;
     spr.radiusMesh.material.color.setHex(0x66CCFF);
@@ -7297,6 +7344,26 @@ function showSprinklerSpray(spr) {
         spr.radiusMesh.material.color.setHex(0x44AAFF);
       }
     }, 2000);
+  }
+  // Emit arcing water droplets outward in all directions
+  const numDrops = 24;
+  for (let i = 0; i < numDrops; i++) {
+    const angle = (i / numDrops) * Math.PI * 2;
+    const speed = 0.04 + Math.random() * 0.025;
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 4, 4),
+      new THREE.MeshBasicMaterial({ color: 0x4FC3F7, transparent: true, opacity: 0.85 })
+    );
+    m.position.set(spr.wx, 0.55, spr.wz); // start at sprinkler head height
+    m.userData = {
+      vx: Math.cos(angle) * speed,
+      vz: Math.sin(angle) * speed,
+      vy: 0.06 + Math.random() * 0.02,   // initial upward velocity
+      age: 0,
+      isSprinklerDrop: true,
+    };
+    scene.add(m);
+    droplets.push(m);
   }
 }
 
@@ -8770,16 +8837,11 @@ function makeTreeOreMesh(oreType) {
   const colors = { copper: 0xDD7733, silver: 0xCCCCCC, gold: 0xFFD700 };
   const col = colors[oreType] || 0xDD7733;
   const g = new THREE.Group();
-  const mat = new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 1.2 });
+  const mat = new THREE.MeshLambertMaterial({ color: col });
   // Large visible nugget
   const nugget = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), mat);
   nugget.scale.set(1.2, 0.7, 1.2);
   g.add(nugget);
-  // Small sparkle highlight on top
-  const sparkMat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.5 });
-  const spark = new THREE.Mesh(new THREE.SphereGeometry(0.05, 5, 5), sparkMat);
-  spark.position.y = 0.18;
-  g.add(spark);
   g.userData.oreType = oreType;
   return g;
 }
@@ -8845,6 +8907,22 @@ function findReadyCrop() {
 function tickDrone(now) {
   if (!hasDrone || !drone) return;
   const d = drone;
+
+  // Grounded during strong wind
+  if (currentWeather === WEATHER.WIND) {
+    if (d.state !== 'parked') {
+      d.state = 'flyToBase';
+      d.stateStart = now;
+    }
+    // Still spin rotors slowly when parked in wind
+    d.propPhase += 0.05;
+    for (let i = 0; i < 4; i++) {
+      const rotor = d.mesh.getObjectByName('rotor' + i);
+      if (rotor) rotor.rotation.y = d.propPhase * (i % 2 === 0 ? 1 : -1);
+    }
+    if (d.state === 'parked') return;
+    // Let flyToBase finish so it gets home, then stop
+  }
 
   // Spin rotors
   d.propPhase += 0.3;
@@ -8921,7 +8999,7 @@ function tickDrone(now) {
       if (d.carryingOre && d.targetIdx >= 0 && !treeOres[d.targetIdx]) {
         const oreMesh = makeTreeOreMesh(d.carryingOre);
         const perch = CROW_PERCHES[d.targetIdx];
-        oreMesh.position.set(perch.x, CROW_PERCH_Y + 0.15, perch.z);
+        oreMesh.position.set(perch.x, CROW_PERCH_Y + 0.15, perch.z + 0.3);
         scene.add(oreMesh);
         treeOres[d.targetIdx] = oreMesh;
       }
@@ -9524,6 +9602,20 @@ updateToolChevrons();
 const MINE_GRID      = 10;
 const MINE_MAX_LEVEL = 256;
 const MINE_TILE_W    = 1.0;
+let deepestMineLevel = 1;
+
+// Spelunker Bunker
+let spelunkerUnlocked   = false;
+let spelunkerConstrGrp  = null;
+let spelunkerBuiltGrp   = null;
+const spelunkerMeshes   = [];
+const REPELLENT_PRICE   = 30;
+const BOMB_PRICE        = 50;
+let repellentLevelsLeft = 0;  // countdown of levels where centipede spawn is reduced
+let placingBomb         = false;
+let placingBombIdx      = -1;   // backpack slot index of the bomb being placed
+let bombGhostMesh       = null; // translucent bomb preview mesh
+const mineBombs         = []; // active bombs in mine {mesh, x, z, timer, countdown, labelEl}
 
 // Mineral drop chances per level band
 function mineDropChances(level) {
@@ -9923,6 +10015,15 @@ function generateMineLevel(level) {
   mineDirtMeshes = [];
   resetMineMoles();
   resetMineCentipedes();
+  // Clear active bombs
+  mineBombs.forEach(b => {
+    if (b.mesh) mineScene.remove(b.mesh);
+    if (b.blastMesh) mineScene.remove(b.blastMesh);
+    if (b.labelEl) b.labelEl.remove();
+  });
+  mineBombs.length = 0;
+  placingBomb = false;
+  if (bombGhostMesh) { mineScene.remove(bombGhostMesh); bombGhostMesh = null; }
 
   const density = mineRockDensity(level);
 
@@ -10002,6 +10103,30 @@ function generateMineLevel(level) {
     }
   }
 
+  // Variable lighting — some levels have fewer torches and mushrooms
+  const darkChance = Math.min(0.5, level * 0.015); // deeper = more chance of dark patches
+  mineScene.traverse(c => {
+    if (c.name === 'mineFlame') {
+      const parentStick = c; // flame cone
+      const hide = Math.random() < darkChance;
+      c.visible = !hide;
+    }
+  });
+  // Hide some mushrooms
+  mineMushroomLights.forEach(ml => {
+    const hide = Math.random() < darkChance;
+    ml.group.visible = !hide;
+    ml.light.intensity = hide ? 0 : 1.2;
+  });
+  // Dim torch lights that correspond to hidden torches
+  mineTorchLights.forEach(pl => {
+    if (Math.random() < darkChance) pl.intensity = 0;
+  });
+
+  // Track deepest level reached
+  if (level > deepestMineLevel) deepestMineLevel = level;
+  checkSpelunkerUnlock();
+
   // Update HUD
   const levelEl = document.getElementById('mine-level-num');
   if (levelEl) levelEl.textContent = level;
@@ -10051,11 +10176,30 @@ function rollMineDrop(level) {
   const ch  = mineDropChances(level);
   const r   = Math.random();
   let acc   = 0;
-  acc += ch.rock;   if (r < acc) { materials.rock++;   updateMaterialsUI(); return '🪨 +1 Rock'; }
-  acc += ch.copper; if (r < acc) { materials.copper++; updateMaterialsUI(); return '🟠 +1 Copper!'; }
-  acc += ch.silver; if (r < acc) { materials.silver++; updateMaterialsUI(); return '⚪ +1 Silver!'; }
-  acc += ch.gold;   if (r < acc) { materials.gold++;   updateMaterialsUI(); return '🟡 +1 Gold Ore!'; }
+  acc += ch.rock;   if (r < acc) { materials.rock++;   updateMaterialsUI(); return { text: '🪨 +1 Rock',    emoji: '🪨' }; }
+  acc += ch.copper; if (r < acc) { materials.copper++; updateMaterialsUI(); return { text: '🟠 +1 Copper!', emoji: '🟠' }; }
+  acc += ch.silver; if (r < acc) { materials.silver++; updateMaterialsUI(); return { text: '⚪ +1 Silver!', emoji: '⚪' }; }
+  acc += ch.gold;   if (r < acc) { materials.gold++;   updateMaterialsUI(); return { text: '🟡 +1 Gold Ore!', emoji: '🟡' }; }
   return null; // nothing
+}
+
+const _mineLootPopups = [];
+function showMineLootPopup(x, z, emoji) {
+  const el = document.createElement('div');
+  el.textContent = emoji;
+  el.style.cssText = 'position:fixed;font-size:1.6rem;pointer-events:none;z-index:110;transition:transform .75s ease-out,opacity .75s ease-out;opacity:1;transform:translateY(0)';
+  document.body.appendChild(el);
+  const entry = { el, x, z, start: performance.now() };
+  _mineLootPopups.push(entry);
+  // Position immediately
+  const proj = new THREE.Vector3(x + 0.5, 0.5, z + 0.5).project(camera);
+  const sx = (proj.x * 0.5 + 0.5) * window.innerWidth;
+  const sy = (1 - (proj.y * 0.5 + 0.5)) * window.innerHeight;
+  el.style.left = sx + 'px';
+  el.style.top  = sy + 'px';
+  // Trigger float-up + fade
+  requestAnimationFrame(() => { el.style.transform = 'translateY(-40px)'; el.style.opacity = '0'; });
+  setTimeout(() => { el.remove(); const idx = _mineLootPopups.indexOf(entry); if (idx >= 0) _mineLootPopups.splice(idx, 1); }, 750);
 }
 
 // ---- Hit a mine rock ----
@@ -10080,11 +10224,13 @@ function hitMineRock(x, z) {
     if (rm) { mineScene.userData.levelGroup.remove(rm); mineRockMeshes[x][z] = null; }
     td.hasRock = false;
     const drop = rollMineDrop(mineLevel);
-    if (Math.random() < 0.20) {
+    const centipedeChance = repellentLevelsLeft > 0 ? 0.05 : 0.20;
+    if (Math.random() < centipedeChance) {
       spawnMineCentipede(x + 0.5, z + 0.5);
       showTip('🐛 A centipede crawled out of the rock!');
     } else if (drop) {
-      showTip(drop);
+      showTip(drop.text);
+      showMineLootPopup(x, z, drop.emoji);
     } else {
       showTip('🪨 Rock cleared');
     }
@@ -10128,7 +10274,7 @@ function digMineTile(x, z) {
   const digBonus = lastTitheDay === dayCount ? 0.08 : 0;
   if (Math.random() < 0.08 + (mineLevel / MINE_MAX_LEVEL) * 0.12 + digBonus) {
     const drop = rollMineDrop(mineLevel);
-    if (drop) showTip(`🪏 Dug something up! ${drop}`);
+    if (drop) { showTip(`🪏 Dug something up! ${drop.text}`); showMineLootPopup(x, z, drop.emoji); }
     else showTip('🪏 Dug — nothing here.');
   } else {
     showTip('🪏 You dig… nothing but dirt.');
@@ -10163,6 +10309,7 @@ function descendMine() {
   // Record tunnel position for rope before generating new level
   const prevTunnel = { x: mineTunnelPos.x, z: mineTunnelPos.z };
   mineLevel++;
+  if (repellentLevelsLeft > 0) repellentLevelsLeft--;
   generateMineLevel(mineLevel);
   // Place rope at where the hole was
   if (mineRopeMesh) mineScene.remove(mineRopeMesh);
@@ -10233,7 +10380,7 @@ function switchToMine() {
   // Hide blightbugs
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
   // Hide town labels
-  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
+  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblSpelunker, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
   // Update scene buttons
   document.getElementById('btn-farm').classList.remove('active-scene');
   document.getElementById('btn-town').classList.remove('active-scene');
@@ -10255,6 +10402,205 @@ function switchFromMine() {
   mineLevel = 1;
 }
 
+// ---- Mine Bombs ----
+function makeMineBombMesh() {
+  const grp = new THREE.Group();
+  // Body
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(0.25, 8, 8),
+    new THREE.MeshLambertMaterial({ color: 0x222222 })
+  );
+  body.position.y = 0.25;
+  grp.add(body);
+  // Fuse
+  const fuse = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.02, 0.02, 0.2, 4),
+    new THREE.MeshBasicMaterial({ color: 0xFF4400 })
+  );
+  fuse.position.set(0, 0.48, 0);
+  fuse.name = 'bombFuse';
+  grp.add(fuse);
+  // Spark at fuse tip
+  const spark = new THREE.Mesh(
+    new THREE.SphereGeometry(0.04, 4, 4),
+    new THREE.MeshBasicMaterial({ color: 0xFFFF00 })
+  );
+  spark.position.set(0, 0.58, 0);
+  spark.name = 'bombSpark';
+  grp.add(spark);
+  return grp;
+}
+
+function cancelBombPlacement() {
+  placingBomb = false;
+  placingBombIdx = -1;
+  if (bombGhostMesh) { mineScene.remove(bombGhostMesh); bombGhostMesh = null; }
+}
+
+function placeMineBomb(x, z) {
+  if (!placingBomb || placingBombIdx < 0) return;
+  // Remove ghost
+  if (bombGhostMesh) { mineScene.remove(bombGhostMesh); bombGhostMesh = null; }
+  // Remove from backpack
+  backpackItems.splice(placingBombIdx, 1);
+  updateBackpackUI();
+  placingBomb = false;
+  placingBombIdx = -1;
+
+  const mesh = makeMineBombMesh();
+  mesh.position.set(x + 0.5, 0, z + 0.5);
+  mineScene.add(mesh);
+
+  // Countdown label (DOM)
+  const label = document.createElement('div');
+  label.style.cssText = 'position:fixed;color:#FF4400;font-weight:900;font-size:1.4rem;pointer-events:none;z-index:100;text-shadow:0 0 6px #FF0000';
+  label.textContent = '3';
+  document.body.appendChild(label);
+
+  mineBombs.push({
+    mesh, x, z,
+    timer: performance.now(),
+    countdown: 3,
+    labelEl: label,
+    exploded: false,
+  });
+  showTip('💣 Bomb placed! Stand back!');
+}
+
+function tickMineBombs(now) {
+  for (let i = mineBombs.length - 1; i >= 0; i--) {
+    const b = mineBombs[i];
+    if (b.exploded) {
+      // Clean up after blast animation
+      if (now - b.explodeTime > 800) {
+        if (b.blastMesh) mineScene.remove(b.blastMesh);
+        if (b.labelEl) b.labelEl.remove();
+        mineBombs.splice(i, 1);
+      } else {
+        // Expand and fade blast sphere
+        const t = (now - b.explodeTime) / 800;
+        if (b.blastMesh) {
+          b.blastMesh.scale.setScalar(1 + t * 3);
+          b.blastMesh.material.opacity = 0.7 * (1 - t);
+        }
+      }
+      continue;
+    }
+
+    const elapsed = (now - b.timer) / 1000;
+    const remaining = Math.ceil(3 - elapsed);
+
+    // Update countdown text
+    if (remaining !== b.countdown && remaining >= 0) {
+      b.countdown = remaining;
+      b.labelEl.textContent = remaining > 0 ? String(remaining) : '💥';
+    }
+
+    // Position label over bomb
+    const proj = new THREE.Vector3(b.x + 0.5, 0.8, b.z + 0.5).project(camera);
+    const sx = (proj.x * 0.5 + 0.5) * window.innerWidth;
+    const sy = (1 - (proj.y * 0.5 + 0.5)) * window.innerHeight;
+    b.labelEl.style.left = sx + 'px';
+    b.labelEl.style.top  = (sy - 20) + 'px';
+
+    // Spark flicker
+    b.mesh.traverse(c => {
+      if (c.name === 'bombSpark') {
+        c.material.color.setHex(Math.random() > 0.5 ? 0xFFFF00 : 0xFF8800);
+        c.visible = remaining > 0;
+      }
+    });
+
+    // Explode at 0
+    if (elapsed >= 3) {
+      explodeMineBomb(b, now);
+    }
+  }
+}
+
+function explodeMineBomb(b, now) {
+  b.exploded = true;
+  b.explodeTime = now;
+  mineScene.remove(b.mesh);
+
+  // Blast sphere visual
+  const blastMat = new THREE.MeshBasicMaterial({ color: 0xFF6600, transparent: true, opacity: 0.7 });
+  const blastMesh = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 12), blastMat);
+  blastMesh.position.set(b.x + 0.5, 0.3, b.z + 0.5);
+  mineScene.add(blastMesh);
+  b.blastMesh = blastMesh;
+
+  // Blast particles
+  for (let p = 0; p < 18; p++) {
+    const pm = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.08, 0.08),
+      new THREE.MeshBasicMaterial({ color: [0xFF4400, 0xFFAA00, 0xFF8800, 0xFFDD00][p % 4], transparent: true })
+    );
+    pm.position.set(
+      b.x + 0.5 + (Math.random() - 0.5) * 0.4,
+      0.3,
+      b.z + 0.5 + (Math.random() - 0.5) * 0.4
+    );
+    mineScene.add(pm);
+    mineParticles.push({
+      mesh: pm,
+      vx: (Math.random() - 0.5) * 0.12,
+      vy: Math.random() * 0.08 + 0.03,
+      vz: (Math.random() - 0.5) * 0.12,
+      life: 1.0,
+    });
+  }
+
+  // Destroy rocks and dig dirt in radius
+  const BLAST_R = 4;
+  let destroyed = 0;
+  for (let dx = -BLAST_R; dx <= BLAST_R; dx++) {
+    for (let dz = -BLAST_R; dz <= BLAST_R; dz++) {
+      const tx = b.x + dx, tz = b.z + dz;
+      if (tx < 0 || tx >= MINE_GRID || tz < 0 || tz >= MINE_GRID) continue;
+      if (Math.hypot(dx, dz) > BLAST_R) continue;
+      const td = mineTileGrid[tx][tz];
+      if (!td) continue;
+      if (td.hasRock) {
+        // Remove rock
+        const rm = mineRockMeshes[tx][tz];
+        if (rm) { mineScene.userData.levelGroup.remove(rm); mineRockMeshes[tx][tz] = null; }
+        td.hasRock = false;
+        td.hp = 0;
+        destroyed++;
+        // Normal drop roll
+        const drop = rollMineDrop(mineLevel);
+        if (drop) { showTip(drop.text); showMineLootPopup(tx, tz, drop.emoji); }
+      } else if (!td.isDug && !td.isTunnel) {
+        // Dig dirt
+        td.isDug = true;
+        const tileMesh = mineTileMeshes[tx][tz];
+        if (tileMesh) tileMesh.material.color.setHex(0x1a1008);
+        const dm = makeMineDirtMesh();
+        dm.position.set(tx + 0.5, 0, tz + 0.5);
+        mineScene.userData.levelGroup.add(dm);
+        mineDirtMeshes[tx][tz] = dm;
+        // Small dig loot chance
+        if (Math.random() < 0.15) {
+          const drop = rollMineDrop(mineLevel);
+          if (drop) showMineLootPopup(tx, tz, drop.emoji);
+        }
+      }
+      // Reveal tunnel if blasted
+      if (td.isTunnel && !td.tunnelRevealed) {
+        td.tunnelRevealed = true;
+        td.isDug = true;
+        if (td.tunnelMesh) td.tunnelMesh.visible = true;
+        showTip('⬇️ The blast revealed a tunnel!');
+      }
+    }
+  }
+  if (destroyed > 0) showTip(`💥 BOOM! Destroyed ${destroyed} rock${destroyed > 1 ? 's' : ''}!`);
+  else showTip('💥 BOOM! No rocks in range.');
+
+  b.labelEl.textContent = '💥';
+}
+
 // ---- Animate mine torches (flicker) ----
 let _mineLastTick = 0;
 function tickMine(now) {
@@ -10267,8 +10613,9 @@ function tickMine(now) {
     pl.intensity = 0.35 + Math.sin(now * 0.0035 + i * 2.1) * 0.1 + Math.random() * 0.03;
   });
   mineCenterLight.intensity = 1.0 + Math.sin(now * 0.002) * 0.2;
-  // Mushroom glow pulse
+  // Mushroom glow pulse (skip hidden ones)
   mineMushroomLights.forEach(ml => {
+    if (!ml.group.visible) return;
     const pulse = 0.8 + Math.sin(now * 0.0025 + ml.idx * 1.7) * 0.4;
     ml.light.intensity = pulse;
     ml.group.traverse(c => {
@@ -10289,6 +10636,7 @@ function tickMine(now) {
   tickMineBats(now, dt);
   tickMineMoles(dt, now);
   tickMineCentipedes(dt, now);
+  tickMineBombs(now);
 }
 
 // ================================================================
@@ -10517,7 +10865,7 @@ function payOffMole(mole) {
   // Track daily mole payoffs for yellow mole trigger
   if (_molePaidLastDay !== dayCount) { molesPaidToday = 0; _molePaidLastDay = dayCount; }
   molesPaidToday++;
-  if (molesPaidToday >= 5 && !yellowMoleActive && Math.random() < 0.15) {
+  if (molesPaidToday >= 5 && !yellowMoleActive && Math.random() < 0.25) {
     setTimeout(() => spawnYellowMole(), 1200);
   }
 
@@ -10755,6 +11103,33 @@ function stowInBackpack(type) {
 function useBackpackItem(idx) {
   if (idx < 0 || idx >= backpackItems.length) return;
   const item = backpackItems[idx];
+
+  // Special items (non-stamina)
+  if (item.type === 'repellent') {
+    if (currentView !== 'mine') { showTip('🧴 Use repellent while in the mine!'); return; }
+    repellentLevelsLeft = 5;
+    backpackItems.splice(idx, 1);
+    updateBackpackUI();
+    showTip('🧴 Centipede Repellent applied! Reduced centipede encounters for 5 levels.');
+    return;
+  }
+  if (item.type === 'bomb') {
+    if (currentView !== 'mine') { showTip('💣 Use bombs while in the mine!'); return; }
+    placingBomb = true;
+    placingBombIdx = idx;
+    closeBackpack();
+    // Create ghost bomb preview
+    if (bombGhostMesh) mineScene.remove(bombGhostMesh);
+    bombGhostMesh = makeMineBombMesh();
+    bombGhostMesh.traverse(c => {
+      if (c.isMesh) { c.material = c.material.clone(); c.material.transparent = true; c.material.opacity = 0.45; }
+    });
+    bombGhostMesh.visible = false;
+    mineScene.add(bombGhostMesh);
+    showTip('💣 Click a tile in the mine to place the bomb! (Right-click or Esc to cancel)');
+    return;
+  }
+
   const info = getConsumableInfo(item.type);
   if (!info) return;
 
@@ -11727,6 +12102,90 @@ const animalMeshes = [];
   roboticsBuiltGrp = grp;
 })();
 
+// ---- Spelunker Bunker — Under Construction (dome scaffolding) ----
+(function() {
+  const grp = new THREE.Group();
+  const beamMat = new THREE.MeshLambertMaterial({ color: 0xBBBBBB });
+  const signMat = new THREE.MeshLambertMaterial({ color: 0xFFCC00 });
+  // Dome scaffolding — 8 arching ribs
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.04, 4, 12, Math.PI), beamMat);
+    rib.rotation.y = angle;
+    rib.position.y = 0;
+    grp.add(rib);
+  }
+  // Base ring
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.05, 6, 24), beamMat);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.05;
+  grp.add(ring);
+  // Mid ring
+  const midRing = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.04, 6, 20), beamMat);
+  midRing.rotation.x = Math.PI / 2;
+  midRing.position.y = 0.75;
+  grp.add(midRing);
+  // Entrance cube scaffolding
+  const entBeam = new THREE.MeshLambertMaterial({ color: 0xAAAAAA });
+  [[-0.4,0,-1.5],[0.4,0,-1.5],[-0.4,0.8,-1.5],[0.4,0.8,-1.5]].forEach(([x,y,z]) => {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.9, 0.06), entBeam);
+    p.position.set(x, y + 0.45, z); grp.add(p);
+  });
+  // Top beam of entrance
+  const topBeam = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.06, 0.06), entBeam);
+  topBeam.position.set(0, 0.93, -1.5); grp.add(topBeam);
+  // Warning sign
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.4, 0.08), signMat);
+  sign.position.set(0, 1.1, -1.55); grp.add(sign);
+  const stripe = new THREE.MeshLambertMaterial({ color: 0x111111 });
+  [-0.4, 0.1, 0.6].forEach(sx => {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.38, 0.09), stripe);
+    s.position.set(sx, 1.1, -1.55); grp.add(s);
+  });
+  grp.position.set(-5, 0, 8);
+  townScene.add(grp);
+  spelunkerConstrGrp = grp;
+})();
+
+// ---- Spelunker Bunker — Built (light grey dome + cube entrance) ----
+(function() {
+  const grp = new THREE.Group();
+  const domeMat = new THREE.MeshLambertMaterial({ color: 0xCCCCCC });
+  const doorMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+  const trimMat = new THREE.MeshLambertMaterial({ color: 0xFF8800 });
+  // Dome — half sphere
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.5, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), domeMat);
+  dome.position.y = 0;
+  grp.add(dome);
+  // Entrance cube
+  const entrance = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.7), domeMat);
+  entrance.position.set(0, 0.45, -1.5); grp.add(entrance);
+  // Door
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.08), doorMat);
+  door.position.set(0, 0.35, -1.86); grp.add(door);
+  // Sign above door
+  const signBg = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.35, 0.08), trimMat);
+  signBg.position.set(0, 0.88, -1.86); grp.add(signBg);
+  // Porthole windows on dome sides
+  const winMat = new THREE.MeshBasicMaterial({ color: 0xFFDD44, transparent: true, opacity: 0.7 });
+  [-1.2, 1.2].forEach(x => {
+    const win = new THREE.Mesh(new THREE.CircleGeometry(0.2, 8), winMat);
+    win.position.set(x, 0.7, x > 0 ? -0.3 : -0.3);
+    win.rotation.y = x > 0 ? -Math.PI / 4 : Math.PI / 4;
+    grp.add(win);
+  });
+  // Ventilation pipe on top
+  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.35, 6), doorMat);
+  pipe.position.set(0.3, 1.55, 0); grp.add(pipe);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.04, 6), doorMat);
+  cap.position.set(0.3, 1.74, 0); grp.add(cap);
+  grp.traverse(m => { if (m.isMesh) { m.userData.building = 'spelunker'; spelunkerMeshes.push(m); } });
+  grp.position.set(-5, 0, 8);
+  grp.visible = false;
+  townScene.add(grp);
+  spelunkerBuiltGrp = grp;
+})();
+
 // ---- Blacksmith — Under Construction ----
 let blacksmithConstrGrp = null;
 let blacksmithBuiltGrp  = null;
@@ -11871,6 +12330,7 @@ const lblBakery     = makeTownLabel('🥐 Under Construction', 'lbl-bakery');
 const lblChurch     = makeTownLabel('⛪ Church', 'lbl-church');
 const lblAnimal     = makeTownLabel('🐔 Animal Shop', 'lbl-animal');
 const lblRobotics     = makeTownLabel('🔧 Under Construction', 'lbl-robotics');
+const lblSpelunker    = makeTownLabel('⛏️ Under Construction', 'lbl-spelunker');
 const lblBlacksmith   = makeTownLabel('🔨 Under Construction', 'lbl-blacksmith');
 const lblUniversity   = makeTownLabel('🏛️ Under Construction', 'lbl-university');
 const TOWN_WORLD_LABELS = [
@@ -11880,6 +12340,7 @@ const TOWN_WORLD_LABELS = [
   { el: lblChurch,     pos: new THREE.Vector3(  0, 4.5,-10) },
   { el: lblAnimal,     pos: new THREE.Vector3(-10, 5, 8) },
   { el: lblRobotics,   pos: new THREE.Vector3(  0, 5, 8) },
+  { el: lblSpelunker,  pos: new THREE.Vector3( -5, 3, 8) },
   { el: lblBlacksmith, pos: new THREE.Vector3(3.7, 4, 8) },
   { el: lblUniversity, pos: new THREE.Vector3(-10, 9, -10) },
 ];
@@ -11933,7 +12394,7 @@ function switchToTown() {
   if (incubatorMesh) incubatorMesh.visible = false;
   if (chickenCoopMesh) chickenCoopMesh.visible = false;
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
-  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'block');
+  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblSpelunker, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'block');
   if (roboSweeper) roboSweeper.mesh.visible = false;
   if (eggcavator) eggcavator.mesh.visible = false;
   if (autoMower) autoMower.mesh.visible = false;
@@ -11982,7 +12443,7 @@ function switchToFarm() {
   if (chickenCoopMesh) chickenCoopMesh.visible = true;
   updateHopperHUD();
   blightBugs.forEach(b => { b.el.style.visibility = ''; });
-  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
+  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblSpelunker, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
   if (roboSweeper) roboSweeper.mesh.visible = true;
   if (eggcavator) eggcavator.mesh.visible = true;
   if (autoMower) autoMower.mesh.visible = true;
@@ -12002,6 +12463,7 @@ function switchToFarm() {
   document.getElementById('church-overlay').style.display = 'none';
   document.getElementById('blacksmith-overlay').style.display = 'none';
   document.getElementById('university-overlay').style.display = 'none';
+  document.getElementById('spelunker-overlay').style.display = 'none';
   document.getElementById('btn-town').classList.remove('active-scene');
   document.getElementById('btn-farm').classList.add('active-scene');
   showTip(HINT[currentTool], false);
@@ -12882,6 +13344,68 @@ function unlockEngSkill(id) {
   renderEngTree();
 }
 
+// ================================================================
+//  SPELUNKER BUNKER
+// ================================================================
+function checkSpelunkerUnlock() {
+  if (spelunkerUnlocked) return;
+  if (deepestMineLevel < 10) return;
+  spelunkerUnlocked = true;
+  if (spelunkerConstrGrp) spelunkerConstrGrp.visible = false;
+  if (spelunkerBuiltGrp)  spelunkerBuiltGrp.visible  = true;
+  lblSpelunker.textContent = '⛏️ Spelunker Bunker';
+  showTip('⛏️ The Spelunker Bunker is now open!');
+}
+
+function openSpelunkerBunker() {
+  if (!spelunkerUnlocked) { showTip('⛏️ Still under construction… reach mine level 10!'); return; }
+
+  // Repellent row
+  const repelBtn = document.getElementById('spelunk-repel-btn');
+  const repelStatus = document.getElementById('spelunk-repel-status');
+  const canRepel = hasBackpack && gold >= REPELLENT_PRICE && backpackItems.length < backpackSlots;
+  repelBtn.disabled = !canRepel;
+  repelBtn.style.opacity = canRepel ? '1' : '0.45';
+  if (!hasBackpack) repelStatus.textContent = '⚠️ Requires backpack';
+  else if (repellentLevelsLeft > 0) repelStatus.textContent = `Active: ${repellentLevelsLeft} levels left`;
+  else repelStatus.textContent = '';
+
+  // Bomb row
+  const bombBtn = document.getElementById('spelunk-bomb-btn');
+  const bombStatus = document.getElementById('spelunk-bomb-status');
+  const canBomb = hasBackpack && gold >= BOMB_PRICE && backpackItems.length < backpackSlots;
+  bombBtn.disabled = !canBomb;
+  bombBtn.style.opacity = canBomb ? '1' : '0.45';
+  if (!hasBackpack) bombStatus.textContent = '⚠️ Requires backpack';
+  else bombStatus.textContent = '';
+
+  document.getElementById('spelunker-overlay').style.display = 'flex';
+}
+
+function buyRepellent() {
+  if (!hasBackpack) { showTip('⚠️ You need a backpack to carry repellent!'); return; }
+  if (gold < REPELLENT_PRICE) { showTip('⚠️ Not enough gold!'); return; }
+  if (backpackItems.length >= backpackSlots) { showTip('🎒 Backpack is full!'); return; }
+  gold -= REPELLENT_PRICE;
+  updateGoldUI();
+  backpackItems.push({ type: 'repellent', emoji: '🧴', name: 'Centipede Repellent' });
+  updateBackpackUI();
+  showTip('🧴 Centipede Repellent stowed in backpack! Use it in the mine.');
+  openSpelunkerBunker(); // refresh
+}
+
+function buyBomb() {
+  if (!hasBackpack) { showTip('⚠️ You need a backpack to carry bombs!'); return; }
+  if (gold < BOMB_PRICE) { showTip('⚠️ Not enough gold!'); return; }
+  if (backpackItems.length >= backpackSlots) { showTip('🎒 Backpack is full!'); return; }
+  gold -= BOMB_PRICE;
+  updateGoldUI();
+  backpackItems.push({ type: 'bomb', emoji: '💣', name: 'Bomb' });
+  updateBackpackUI();
+  showTip('💣 Bomb stowed in backpack! Use it in the mine.');
+  openSpelunkerBunker(); // refresh
+}
+
 function openRoboticsShop() {
   if (!roboticsUnlocked) { showTip('🔧 Still under construction…'); return; }
   const row = document.getElementById('robosweeper-row');
@@ -13191,6 +13715,12 @@ canvas.addEventListener('click', e => {
   const td = mineTileGrid[x][z];
   if (!td) return;
 
+  // Bomb placement
+  if (placingBomb) {
+    placeMineBomb(x, z);
+    return;
+  }
+
   if (type === 'tunnel' && td.isTunnel && td.tunnelRevealed) {
     descendMine();
     return;
@@ -13214,6 +13744,19 @@ canvas.addEventListener('click', e => {
   }
 });
 
+// Ghost bomb follows cursor in mine
+canvas.addEventListener('mousemove', e => {
+  if (currentView !== 'mine' || !placingBomb || !bombGhostMesh) return;
+  const hit = getMineClickTarget(e);
+  if (hit) {
+    bombGhostMesh.position.set(hit.x + 0.5, 0, hit.z + 0.5);
+    bombGhostMesh.visible = true;
+  } else {
+    bombGhostMesh.visible = false;
+  }
+  canvas.style.cursor = 'crosshair';
+});
+
 canvas.addEventListener('click', e => {
   if (currentView !== 'town') return;
   // Close modals on backdrop click
@@ -13224,7 +13767,8 @@ canvas.addEventListener('click', e => {
       document.getElementById('robotics-overlay').style.display === 'flex' ||
       document.getElementById('church-overlay').style.display === 'flex' ||
       document.getElementById('blacksmith-overlay').style.display === 'flex' ||
-      document.getElementById('university-overlay').style.display === 'flex') return;
+      document.getElementById('university-overlay').style.display === 'flex' ||
+      document.getElementById('spelunker-overlay').style.display === 'flex') return;
   const rect = canvas.getBoundingClientRect();
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
@@ -13240,6 +13784,7 @@ canvas.addEventListener('click', e => {
   if (bld === 'blacksmith')  openBlacksmith();
   if (bld === 'university')  openUniversity();
   if (bld === 'bakery')      openBakery();
+  if (bld === 'spelunker')   openSpelunkerBunker();
 });
 
 // Town label hover feedback
@@ -13249,7 +13794,7 @@ canvas.addEventListener('mousemove', e => {
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
   townRaycaster.setFromCamera({ x: mx, y: my }, camera);
-  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...bakeryMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...churchMeshes, ...blacksmithMeshes, ...universityMeshes], false);
+  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...bakeryMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...spelunkerMeshes, ...churchMeshes, ...blacksmithMeshes, ...universityMeshes], false);
   canvas.style.cursor = hits.length ? 'pointer' : 'default';
 });
 
