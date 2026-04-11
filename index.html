@@ -884,6 +884,19 @@
       </div>
     </div>
 
+    <div class="shop-section">
+      <h4>🌀 Warp Drill</h4>
+      <div class="shop-row" style="flex-direction:column;align-items:flex-start;gap:4px">
+        <span style="font-size:.82rem;color:#ccc;line-height:1.5">
+          A powerful drill that warps you 20 levels deeper in the mine. Requires backpack.
+        </span>
+        <div style="display:flex;align-items:center;gap:14px;width:100%;justify-content:space-between;margin-top:4px">
+          <span style="font-size:.9rem" id="spelunk-warp-status"></span>
+          <button class="shop-buy-btn" id="spelunk-warp-btn" onclick="buyWarpDrill()" style="background:rgba(80,40,160,.85)">Buy 200🪙</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -1570,21 +1583,27 @@ let bakeryUnlocked = false;
 // Upgradeable tools: hoe, axe, pickaxe, scythe
 // toolLevels[tool] = 0..3  (0 = base)
 // toolUpgrading[tool] = { finishDay } or null
-const UPGRADEABLE_TOOLS = ['hoe', 'axe', 'pickaxe', 'scythe'];
-const TOOL_EMOJI = { hoe:'⛏️', axe:'🪓', pickaxe:'⛏', scythe:'🌾' };
-const TOOL_LABEL = { hoe:'Hoe', axe:'Axe', pickaxe:'Pickaxe', scythe:'Scythe' };
+const UPGRADEABLE_TOOLS = ['hoe', 'water', 'axe', 'pickaxe', 'scythe'];
+const TOOL_EMOJI = { hoe:'⛏️', water:'🪣', axe:'🪓', pickaxe:'⛏', scythe:'🌾' };
+const TOOL_LABEL = { hoe:'Hoe', water:'Watering Can', axe:'Axe', pickaxe:'Pickaxe', scythe:'Scythe' };
 // Upgrade costs: [coins, material_amount] at each level (1→2, 2→3, 3 is max)
 // Material: level 1 cost uses copper, level 2 silver, level 3 gold ore
-const UPGRADE_COIN_COST   = [60, 120, 200];
-const UPGRADE_MAT_COST    = [5, 3, 3];      // copper/silver/gold ore amounts
+const UPGRADE_COIN_COST   = [60, 120, 900];
+const UPGRADE_MAT_COST    = [5, 3, 13];     // copper/silver/gold ore amounts
 const UPGRADE_MAT_KEY     = ['copper', 'silver', 'gold']; // materials key
 const UPGRADE_MAT_EMOJI   = ['🟠', '⚪', '🟡'];
-const toolLevels    = { hoe:0, axe:0, pickaxe:0, scythe:0 };
-const toolUpgrading = { hoe:null, axe:null, pickaxe:null, scythe:null };
+const toolLevels    = { hoe:0, water:0, axe:0, pickaxe:0, scythe:0 };
+const toolUpgrading = { hoe:null, water:null, axe:null, pickaxe:null, scythe:null };
 
 function toolDamageBonus(tool) {
   // Each upgrade level grants +1 effective damage (reduces strikes needed)
   return toolLevels[tool] || 0;
+}
+
+function toolStaminaCost(base, tool) {
+  const lvl = toolLevels[tool] || 0;
+  const discount = lvl >= 3 ? 2 : lvl >= 2 ? 1 : 0;
+  return Math.max(1, base - discount);
 }
 
 function updateToolChevrons() {
@@ -1669,6 +1688,7 @@ function onStaminaExhausted() {
     checkUniversityUnlock();
     checkBakeryUnlock();
     checkUpgradeCompletion();
+    trainDonatedToday = false;
 
     // Reset mine to floor 1
     mineLevel = 1;
@@ -2041,6 +2061,15 @@ function showTip(msg, autoClear=true) {
 // ================================================================
 //  TOOL LOGIC
 // ================================================================
+// AOE offsets for upgraded tools: lvl2 = left+right, lvl3 = +up+down (cross pattern)
+function toolAoeOffsets(tool) {
+  const lvl = toolLevels[tool] || 0;
+  const offsets = [];
+  if (lvl >= 2) { offsets.push([-1,0], [1,0]); }
+  if (lvl >= 3) { offsets.push([0,-1], [0,1]); }
+  return offsets;
+}
+
 function useTool(tile) {
   const d = tile.userData;
   switch (currentTool) {
@@ -2048,7 +2077,15 @@ function useTool(tile) {
     case TOOL.AXE:
       if (toolUpgrading.axe) { showTip('🔨 Axe is being upgraded at the blacksmith!'); break; }
       if (d.obstacle === OBS.TREE) {
-        hitObstacle(tile); sndChop(); drainStamina(3);
+        hitObstacle(tile); sndChop(); drainStamina(toolStaminaCost(3, 'axe'));
+        // AOE: hit adjacent trees
+        for (const [dx, dz] of toolAoeOffsets('axe')) {
+          const nx = d.x + dx, nz = d.z + dz;
+          if (nx >= 0 && nx < GRID && nz >= 0 && nz < GRID) {
+            const nb = tileGrid[nx][nz];
+            if (nb.userData.obstacle === OBS.TREE) hitObstacle(nb);
+          }
+        }
       } else if (d.obstacle === OBS.ROCK) {
         showTip('⚠️  Use the pickaxe ⛏ on rocks');
       } else if (d.obstacle === OBS.GRASS) {
@@ -2059,7 +2096,15 @@ function useTool(tile) {
     case TOOL.PICKAXE:
       if (toolUpgrading.pickaxe) { showTip('🔨 Pickaxe is being upgraded at the blacksmith!'); break; }
       if (d.obstacle === OBS.ROCK) {
-        hitObstacle(tile); sndMine(); drainStamina(2);
+        hitObstacle(tile); sndMine(); drainStamina(toolStaminaCost(2, 'pickaxe'));
+        // AOE: hit adjacent rocks
+        for (const [dx, dz] of toolAoeOffsets('pickaxe')) {
+          const nx = d.x + dx, nz = d.z + dz;
+          if (nx >= 0 && nx < GRID && nz >= 0 && nz < GRID) {
+            const nb = tileGrid[nx][nz];
+            if (nb.userData.obstacle === OBS.ROCK) hitObstacle(nb);
+          }
+        }
       } else if (d.obstacle === OBS.TREE) {
         showTip('⚠️  Use the axe 🪓 on trees');
       } else if (d.obstacle === OBS.GRASS) {
@@ -2123,7 +2168,20 @@ function useTool(tile) {
         d.tilledDay = dayCount;
         tile.material.color.setHex(SOIL_COL[ST.TILLED]);
         showTip('✅ Soil tilled!');
-        sndHoe(); drainStamina(2);
+        sndHoe(); drainStamina(toolStaminaCost(2, 'hoe'));
+        // AOE: till adjacent empty tiles
+        for (const [dx, dz] of toolAoeOffsets('hoe')) {
+          const nx = d.x + dx, nz = d.z + dz;
+          if (nx >= 0 && nx < GRID && nz >= 0 && nz < GRID) {
+            const nb = tileGrid[nx][nz];
+            const nd = nb.userData;
+            if (nd.state === ST.EMPTY && !nd.obstacle) {
+              nd.state = ST.TILLED;
+              nd.tilledDay = dayCount;
+              nb.material.color.setHex(SOIL_COL[ST.TILLED]);
+            }
+          }
+        }
       } else { showTip('⚠️  Already tilled or occupied'); }
       break;
 
@@ -2149,6 +2207,7 @@ function useTool(tile) {
       break;
 
     case TOOL.WATER:
+      if (toolUpgrading.water) { showTip('🔨 Watering Can is being upgraded at the blacksmith!'); break; }
       if (waterCharges <= 0) {
         showTip('🪣 Empty! Click the pond 💧 to refill');
         break;
@@ -2162,7 +2221,25 @@ function useTool(tile) {
         tile.material.color.setHex(0x201008);
         spawnDroplets(tile);
         showTip(`💧 Watered! (${waterCharges} charges left)`);
-        sndWater(); drainStamina(1);
+        sndWater(); drainStamina(toolStaminaCost(1, 'water'));
+        // AOE: water adjacent crops (each costs 1 charge)
+        for (const [dx, dz] of toolAoeOffsets('water')) {
+          if (waterCharges <= 0) break;
+          const nx = d.x + dx, nz = d.z + dz;
+          if (nx >= 0 && nx < GRID && nz >= 0 && nz < GRID) {
+            const nb = tileGrid[nx][nz];
+            const nd = nb.userData;
+            if (nd.state >= ST.SEEDED && nd.state < ST.READY && !nd.watered) {
+              waterCharges--;
+              updateWaterChargesUI();
+              nd.watered = true;
+              nd.wateredAt = performance.now();
+              nd.waterCount++;
+              nb.material.color.setHex(0x201008);
+              spawnDroplets(nb);
+            }
+          }
+        }
         if (waterCharges === 0) showTip('🪣 Can empty! Go refill at the pond 💧');
       } else if (d.state === ST.READY) {
         showTip('🧺 Ready to harvest!');
@@ -2327,6 +2404,7 @@ function tickDayNight(dt) {
     checkUniversityUnlock();
     checkBakeryUnlock();
     checkUpgradeCompletion();
+    trainDonatedToday = false;
   }
 }
 
@@ -8999,6 +9077,7 @@ function tickDrone(now) {
       if (d.carryingOre && d.targetIdx >= 0 && !treeOres[d.targetIdx]) {
         const oreMesh = makeTreeOreMesh(d.carryingOre);
         const perch = CROW_PERCHES[d.targetIdx];
+        oreMesh.scale.setScalar(0.5);
         oreMesh.position.set(perch.x, CROW_PERCH_Y + 0.15, perch.z + 0.3);
         scene.add(oreMesh);
         treeOres[d.targetIdx] = oreMesh;
@@ -9584,6 +9663,7 @@ function animate(now) {
     renderer.render(mineScene, camera);
   } else {
     tickBlacksmithSmoke(now);
+    updateTownMolePositions();
     renderer.render(townScene, camera);
   }
 
@@ -9611,6 +9691,7 @@ let spelunkerBuiltGrp   = null;
 const spelunkerMeshes   = [];
 const REPELLENT_PRICE   = 30;
 const BOMB_PRICE        = 50;
+const WARP_DRILL_PRICE  = 200;
 let repellentLevelsLeft = 0;  // countdown of levels where centipede spawn is reduced
 let placingBomb         = false;
 let placingBombIdx      = -1;   // backpack slot index of the bomb being placed
@@ -10207,7 +10288,7 @@ function hitMineRock(x, z) {
   const td = mineTileGrid[x][z];
   if (!td || !td.hasRock || td.hp <= 0) return;
 
-  sndMine(); drainStamina(3);
+  sndMine(); drainStamina(toolStaminaCost(3, 'pickaxe'));
   td.hp -= 1 + toolDamageBonus('pickaxe'); td.hp = Math.max(td.hp, -1);
   // Flash rock red (hp reduced below, skip the td.hp-- below)
   const rm = mineRockMeshes[x][z];
@@ -10261,7 +10342,7 @@ function digMineTile(x, z) {
   // Already-revealed tunnel — don't dig again
   if (td.isTunnel) return;
 
-  sndDig(); drainStamina(2);
+  sndDig(); drainStamina(toolStaminaCost(2, 'hoe'));
   td.isDug = true;
   const tileMesh = mineTileMeshes[x][z];
   if (tileMesh) tileMesh.material.color.setHex(0x1a1008);
@@ -10381,6 +10462,8 @@ function switchToMine() {
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
   // Hide town labels
   [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblSpelunker, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
+  if (lblTrain) lblTrain.style.display = 'none';
+  hideTownMoleHammers();
   // Update scene buttons
   document.getElementById('btn-farm').classList.remove('active-scene');
   document.getElementById('btn-town').classList.remove('active-scene');
@@ -10855,7 +10938,25 @@ function spawnMole(x, z) {
   mineMoles.push(mole);
 }
 
+function spawnBlueMole(x, z) {
+  const td = mineTileGrid[x] && mineTileGrid[x][z];
+  if (!td || td.isTunnel) return;
+  const mesh = makeBlueMoleMesh();
+  mesh.position.set(x + 0.5, -0.25, z + 0.5);
+  mesh.rotation.y = Math.random() * Math.PI * 2;
+  mineScene.add(mesh);
+  const mole = { mesh, x, z, state: 'rising', riseT: 0, idleTimer: 0, sinkT: 0, isBlue: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0 };
+  createBlueMoleLabel(mole);
+  mineMoles.push(mole);
+  // Random speech bubbles
+  const timer = setInterval(() => {
+    if (mole.state === 'idle') blueMoleSpeechBubble(mole);
+  }, 4000 + Math.random() * 3000);
+  _blueMoleSpeechTimers.set(mole, timer);
+}
+
 function payOffMole(mole) {
+  if (mole.isBlue) { clickBlueMole(mole); return; }
   if (mole.isYellow) { clickYellowMole(mole); return; }
   if (gold < 10) { showTip('⚠️ Not enough gold! (Need 10 🪙)'); return; }
   gold -= 10;
@@ -10910,7 +11011,11 @@ function payOffMole(mole) {
 }
 
 function resetMineMoles() {
-  mineMoles.forEach(m => { mineScene.remove(m.mesh); removeMoleLabel(m); });
+  mineMoles.forEach(m => {
+    mineScene.remove(m.mesh); removeMoleLabel(m);
+    const st = _blueMoleSpeechTimers.get(m);
+    if (st) { clearInterval(st); _blueMoleSpeechTimers.delete(m); }
+  });
   mineMoles.length = 0;
   // Also dismiss yellow mole when changing levels
   if (yellowMoleActive) {
@@ -11041,6 +11146,346 @@ function clickYellowMole(mole) {
   yellowMoleActive = null;
 }
 
+// ---- Blue Fairy Mole (mine) + Town Moles + Bullet Train ----
+const BLUE_MOLE_MIN_LEVEL = 21;
+const BLUE_MOLE_CHANCE    = 0.45;   // chance per mole spawn to be blue (after lvl 21)
+const TOWN_MOLE_MAX       = 8;
+const TRAIN_DONATIONS_MAX = 6;
+const TRAIN_DONATION_COST = 500;
+let townMoles             = [];     // { mesh, idx }
+let trainDonations        = 0;
+let trainDonatedToday     = false;
+let trainGroup            = null;   // THREE.Group for train + tracks in town
+let trainSignMesh         = null;
+let trainMeshes           = [];     // for raycasting
+let lblTrain              = null;
+let _blueMoleSpeechTimers = new Map(); // mole → {timer, el}
+
+function makeBlueMoleMesh() {
+  const g = new THREE.Group();
+  const bodyMat  = new THREE.MeshLambertMaterial({ color: 0x4488FF, emissive: 0x2244AA, emissiveIntensity: 0.4 });
+  const snoutMat = new THREE.MeshLambertMaterial({ color: 0x88BBFF });
+  const clawMat  = new THREE.MeshLambertMaterial({ color: 0x5599EE });
+  const tipMat   = new THREE.MeshLambertMaterial({ color: 0xAADDFF });
+  const wingMat  = new THREE.MeshLambertMaterial({ color: 0xAADDFF, transparent: true, opacity: 0.5 });
+
+  // Body (25% bigger than normal mole's 0.16 → 0.20)
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.20, 8, 6), bodyMat);
+  body.scale.set(1, 0.85, 1.05);
+  g.add(body);
+  // Snout
+  const snout = new THREE.Mesh(new THREE.SphereGeometry(0.088, 6, 5), snoutMat);
+  snout.scale.set(1, 0.85, 1.2);
+  snout.position.set(0, -0.01, 0.17);
+  g.add(snout);
+  // Eyes
+  const eyeGeo = new THREE.SphereGeometry(0.022, 4, 3);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111133 });
+  [-0.08, 0.08].forEach(ex => {
+    const eye = new THREE.Mesh(eyeGeo, eyeMat);
+    eye.position.set(ex, 0.08, 0.14);
+    g.add(eye);
+  });
+  // Front paws + claws
+  [-1, 1].forEach(side => {
+    const paw = new THREE.Mesh(new THREE.SphereGeometry(0.06, 5, 4), clawMat);
+    paw.position.set(side * 0.20, -0.07, 0.09);
+    g.add(paw);
+    for (let c = 0; c < 3; c++) {
+      const angle = (c - 1) * 0.32;
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.07, 4), tipMat);
+      tip.rotation.x = Math.PI / 2;
+      tip.position.set(side * 0.20 + Math.sin(angle) * 0.03, -0.09, 0.16 + Math.cos(angle) * 0.025);
+      g.add(tip);
+    }
+  });
+  // Small fairy wings
+  [-1, 1].forEach(side => {
+    const wing = new THREE.Mesh(new THREE.SphereGeometry(0.10, 6, 4), wingMat);
+    wing.scale.set(0.4, 1, 0.8);
+    wing.position.set(side * 0.18, 0.12, -0.05);
+    wing.name = 'wing' + (side > 0 ? 'R' : 'L');
+    g.add(wing);
+  });
+  return g;
+}
+
+function createBlueMoleLabel(mole) {
+  const div = document.createElement('div');
+  div.style.cssText = 'position:fixed;background:rgba(20,40,80,.85);color:#88CCFF;font-size:.82rem;font-weight:700;padding:4px 12px;border-radius:12px;pointer-events:none;white-space:nowrap;z-index:25;display:none;transform:translateX(-50%);border:2px solid #4488FF';
+  div.textContent = '💙 Click me!';
+  document.body.appendChild(div);
+  moleLabels.set(mole, div);
+}
+
+function blueMoleSpeechBubble(mole) {
+  const phrases = ["Let's go!", "I like to travel!", "Take me up with you!"];
+  const text = phrases[Math.floor(Math.random() * phrases.length)];
+  const div = moleLabels.get(mole);
+  if (div) div.textContent = '💬 ' + text;
+}
+
+function clickBlueMole(mole) {
+  if (townMoles.length >= TOWN_MOLE_MAX) {
+    showTip('🐾 "All my friends are already up there!"');
+    sndMoleSqueak();
+    return;
+  }
+  const phrases = ["Yahoo!", "Really? I can come?", "Yes! I can use my skills!"];
+  const text = phrases[Math.floor(Math.random() * phrases.length)];
+  showTip(`💙 "${text}"`);
+  sndAchievement();
+  mole.state = 'dismissed';
+  removeMoleLabel(mole);
+  // Clear speech timer
+  const st = _blueMoleSpeechTimers.get(mole);
+  if (st) { clearInterval(st); _blueMoleSpeechTimers.delete(mole); }
+  // Add to town
+  addTownMole();
+}
+
+function makeTownMoleMesh(hasHammer) {
+  const g = makeBlueMoleMesh();
+  g.scale.setScalar(1.8); // bigger in town for visibility
+  if (hasHammer) {
+    // Hammer emoji label will be handled via DOM
+  }
+  return g;
+}
+
+function addTownMole() {
+  const idx = townMoles.length;
+  const mesh = makeTownMoleMesh(trainDonations < TRAIN_DONATIONS_MAX);
+  // Position along top-right of town (away from restaurant)
+  const baseX = 8, baseZ = -11;
+  const col = idx % 4, row = Math.floor(idx / 4);
+  mesh.position.set(baseX + col * 1.2, 0.2, baseZ + row * 1.5);
+  mesh.userData.building = 'trainMoles';
+  mesh.traverse(c => { if (c.isMesh) c.userData.building = 'trainMoles'; });
+  townScene.add(mesh);
+  trainMeshes.push(mesh);
+  townMoles.push({ mesh, idx, hammerEl: null });
+  updateTownMoleHammers();
+  // Build track/train piece if first mole
+  if (townMoles.length === 1 && !trainGroup) buildTrainArea();
+  updateTrainLabel();
+}
+
+function updateTownMoleHammers() {
+  townMoles.forEach(tm => {
+    if (trainDonations >= TRAIN_DONATIONS_MAX) {
+      // Train complete — remove hammers
+      if (tm.hammerEl) { tm.hammerEl.remove(); tm.hammerEl = null; }
+    } else if (!tm.hammerEl) {
+      const el = document.createElement('div');
+      el.style.cssText = 'position:fixed;font-size:1.1rem;pointer-events:none;z-index:25;display:none';
+      el.textContent = '🔨';
+      document.body.appendChild(el);
+      tm.hammerEl = el;
+    }
+  });
+}
+
+function updateTownMolePositions() {
+  if (currentView !== 'town') return;
+  const now = performance.now();
+  townMoles.forEach(tm => {
+    // Bob up and down
+    tm.mesh.position.y = 0.2 + Math.sin(now * 0.003 + tm.idx * 1.5) * 0.08;
+    // If train complete, sit in train (y lower, no bob)
+    if (trainDonations >= TRAIN_DONATIONS_MAX) {
+      const col = tm.idx % 4, row = Math.floor(tm.idx / 4);
+      tm.mesh.position.set(8 + col * 0.9, 0.55 + Math.sin(now * 0.002 + tm.idx) * 0.02, -11 + row * 1.5);
+    }
+    // Position hammer label
+    if (tm.hammerEl) {
+      const pos = tm.mesh.position.clone();
+      pos.y += 0.7;
+      pos.project(camera);
+      const sx = (pos.x * 0.5 + 0.5) * window.innerWidth;
+      const sy = (1 - (pos.y * 0.5 + 0.5)) * window.innerHeight;
+      tm.hammerEl.style.display = 'block';
+      tm.hammerEl.style.left = sx + 'px';
+      tm.hammerEl.style.top  = sy + 'px';
+    }
+  });
+}
+
+function hideTownMoleHammers() {
+  townMoles.forEach(tm => { if (tm.hammerEl) tm.hammerEl.style.display = 'none'; });
+}
+
+function buildTrainArea() {
+  trainGroup = new THREE.Group();
+  trainGroup.position.set(8, 0, -9);
+  townScene.add(trainGroup);
+  updateTrainConstruction();
+}
+
+function updateTrainConstruction() {
+  if (!trainGroup) return;
+  // Clear old children
+  while (trainGroup.children.length > 0) trainGroup.remove(trainGroup.children[0]);
+
+  const trackMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+  const railMat  = new THREE.MeshLambertMaterial({ color: 0x888888 });
+  const tieMat   = new THREE.MeshLambertMaterial({ color: 0x6B4226 });
+
+  // Build track segments based on donations (1 segment per donation)
+  const segs = Math.min(trainDonations, TRAIN_DONATIONS_MAX);
+  for (let i = 0; i < segs; i++) {
+    // Two rails
+    [-0.35, 0.35].forEach(offset => {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 1.2), railMat);
+      rail.position.set(offset, 0.06, i * 1.2 - 2);
+      trainGroup.add(rail);
+    });
+    // Ties
+    for (let t = 0; t < 3; t++) {
+      const tie = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.05, 0.15), tieMat);
+      tie.position.set(0, 0.02, i * 1.2 - 2 + t * 0.35 - 0.3);
+      trainGroup.add(tie);
+    }
+  }
+
+  // Under construction sign (after first donation, before complete)
+  if (trainSignMesh) { townScene.remove(trainSignMesh); trainSignMesh = null; }
+  if (segs > 0 && segs < TRAIN_DONATIONS_MAX) {
+    const signGrp = new THREE.Group();
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.8, 0.08), tieMat);
+    post.position.y = 0.4; signGrp.add(post);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 0.06), new THREE.MeshLambertMaterial({ color: 0xFFDD44 }));
+    board.position.y = 0.85; signGrp.add(board);
+    signGrp.position.set(6.5, 0, -9);
+    signGrp.traverse(m => { if (m.isMesh) m.userData.building = 'trainMoles'; });
+    townScene.add(signGrp);
+    trainSignMesh = signGrp;
+  }
+
+  // Train body (appears at donation 4+, completes at 6)
+  if (segs >= 4) {
+    const trainBodyMat = new THREE.MeshLambertMaterial({ color: 0x2255CC });
+    const trainBody = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 3.5), trainBodyMat);
+    trainBody.position.set(0, 0.5, 1.5);
+    trainGroup.add(trainBody);
+    // Nose
+    const noseMat = new THREE.MeshLambertMaterial({ color: 0x1144AA });
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.2, 6), noseMat);
+    nose.rotation.x = Math.PI / 2;
+    nose.position.set(0, 0.5, -0.5);
+    trainGroup.add(nose);
+    // Windows
+    const winMat = new THREE.MeshLambertMaterial({ color: 0xAADDFF, emissive: 0x4488AA, emissiveIntensity: 0.3 });
+    for (let w = 0; w < 3; w++) {
+      [-0.61, 0.61].forEach(side => {
+        const win = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.3, 0.4), winMat);
+        win.position.set(side, 0.6, 0.5 + w * 1.0);
+        trainGroup.add(win);
+      });
+    }
+    // Wheels
+    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+    for (let w = 0; w < 4; w++) {
+      [-0.55, 0.55].forEach(side => {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 8), wheelMat);
+        wheel.rotation.z = Math.PI / 2;
+        wheel.position.set(side, 0.18, w * 1.0);
+        trainGroup.add(wheel);
+      });
+    }
+  }
+
+  // Mark all meshes for raycasting
+  trainGroup.traverse(m => { if (m.isMesh) { m.userData.building = 'trainMoles'; trainMeshes.push(m); } });
+
+  // Remove sign if complete
+  if (segs >= TRAIN_DONATIONS_MAX && trainSignMesh) {
+    townScene.remove(trainSignMesh);
+    trainSignMesh = null;
+  }
+}
+
+function updateTrainLabel() {
+  if (!lblTrain) {
+    lblTrain = makeTownLabel('🚄 Under Construction', 'lbl-train');
+    TOWN_WORLD_LABELS.push({ el: lblTrain, pos: new THREE.Vector3(10, 4, -9) });
+  }
+  if (trainDonations >= TRAIN_DONATIONS_MAX) {
+    lblTrain.textContent = '🚄 Bullet Train';
+  } else if (trainDonations > 0) {
+    lblTrain.textContent = `🚧 Under Construction (${trainDonations}/${TRAIN_DONATIONS_MAX})`;
+  } else {
+    lblTrain.textContent = '🐾 Mole Workers';
+  }
+  lblTrain.style.display = currentView === 'town' ? 'block' : 'none';
+}
+
+function clickTrainMoles() {
+  if (trainDonations >= TRAIN_DONATIONS_MAX) {
+    // Train complete — open blank menu
+    openTrainMenu();
+    return;
+  }
+  if (townMoles.length === 0) return;
+  if (trainDonatedToday) {
+    showTip('🐾 "Thanks! Come back tomorrow for more work!"');
+    return;
+  }
+  // Show donation prompt
+  showTrainDonationPrompt();
+}
+
+function showTrainDonationPrompt() {
+  const existing = document.getElementById('train-donate-prompt');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'train-donate-prompt';
+  el.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.92);border:2px solid #4488FF;border-radius:12px;padding:18px 24px;z-index:210;color:#fff;font-family:monospace;text-align:center;';
+  el.innerHTML = `
+    <div style="font-size:1.1rem;margin-bottom:10px">🐾 Want to donate for supplies?</div>
+    <div style="font-size:.85rem;color:#aaa;margin-bottom:14px">The moles need 500🪙 for construction materials.</div>
+    <div style="display:flex;gap:12px;justify-content:center">
+      <button onclick="donateForTrain()" ${gold >= TRAIN_DONATION_COST ? '' : 'disabled'} style="padding:8px 20px;border:none;border-radius:6px;cursor:pointer;font-family:monospace;font-size:.9rem;background:${gold >= TRAIN_DONATION_COST ? '#2a6' : '#555'};color:#fff;opacity:${gold >= TRAIN_DONATION_COST ? '1' : '0.5'}">${gold >= TRAIN_DONATION_COST ? 'Donate 500🪙' : '⚠️ Not enough gold'}</button>
+      <button onclick="document.getElementById('train-donate-prompt').remove()" style="padding:8px 20px;border:1px solid #666;border-radius:6px;cursor:pointer;font-family:monospace;background:transparent;color:#aaa;">No thanks</button>
+    </div>`;
+  document.body.appendChild(el);
+}
+
+function donateForTrain() {
+  const el = document.getElementById('train-donate-prompt');
+  if (el) el.remove();
+  if (gold < TRAIN_DONATION_COST) { showTip('⚠️ Not enough gold!'); return; }
+  gold -= TRAIN_DONATION_COST;
+  updateGoldUI();
+  trainDonations++;
+  trainDonatedToday = true;
+  updateTrainConstruction();
+  updateTrainLabel();
+  if (trainDonations >= TRAIN_DONATIONS_MAX) {
+    showTip('🚄 The bullet train is complete! The moles hop aboard!');
+    // Move moles into train, remove hammers
+    updateTownMoleHammers();
+  } else {
+    showTip(`🐾 "Thanks for the donation!" Track ${trainDonations}/${TRAIN_DONATIONS_MAX} complete.`);
+  }
+}
+
+function openTrainMenu() {
+  const existing = document.getElementById('train-menu-overlay');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'train-menu-overlay';
+  el.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:200;';
+  el.onclick = e => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div style="background:#1a1a2e;border:2px solid #4488FF;border-radius:14px;padding:24px 32px;color:#fff;font-family:monospace;text-align:center;min-width:280px;">
+      <div style="font-size:1.2rem;margin-bottom:8px">🚄 Bullet Train</div>
+      <div style="color:#aaa;font-size:.85rem;margin-bottom:16px">Coming soon…</div>
+      <button onclick="document.getElementById('train-menu-overlay').remove()" style="padding:6px 18px;border:1px solid #666;border-radius:6px;cursor:pointer;font-family:monospace;background:transparent;color:#aaa;">Close</button>
+    </div>`;
+  document.body.appendChild(el);
+}
+
 let _moleSpawnAccum = 0;
 const MOLE_SPAWN_INTERVAL = 6000; // check every 6s
 
@@ -11113,6 +11558,19 @@ function useBackpackItem(idx) {
     showTip('🧴 Centipede Repellent applied! Reduced centipede encounters for 5 levels.');
     return;
   }
+  if (item.type === 'warpDrill') {
+    if (currentView !== 'mine') { showTip('🌀 Use the Warp Drill while in the mine!'); return; }
+    const floors = Math.min(20, MINE_MAX_LEVEL - mineLevel);
+    if (floors <= 0) { showTip('⛏️ Already at the deepest level!'); return; }
+    backpackItems.splice(idx, 1);
+    updateBackpackUI();
+    closeBackpack();
+    mineLevel += floors;
+    if (repellentLevelsLeft > 0) repellentLevelsLeft = Math.max(0, repellentLevelsLeft - floors);
+    generateMineLevel(mineLevel);
+    showTip(`🌀 Warp Drill activated! Descended ${floors} levels to level ${mineLevel}!`);
+    return;
+  }
   if (item.type === 'bomb') {
     if (currentView !== 'mine') { showTip('💣 Use bombs while in the mine!'); return; }
     placingBomb = true;
@@ -11183,7 +11641,12 @@ function tickMineMoles(dt, now) {
     // Spawn on 1 random eligible tile with 35% chance
     if (eligible.length > 0 && Math.random() < 0.35) {
       const pick = eligible[Math.floor(Math.random() * eligible.length)];
-      spawnMole(pick.x, pick.z);
+      // Blue fairy mole variant after level 21
+      if (mineLevel >= BLUE_MOLE_MIN_LEVEL && townMoles.length < TOWN_MOLE_MAX && Math.random() < BLUE_MOLE_CHANCE) {
+        spawnBlueMole(pick.x, pick.z);
+      } else {
+        spawnMole(pick.x, pick.z);
+      }
     }
   }
 
@@ -11196,9 +11659,11 @@ function tickMineMoles(dt, now) {
       mole.mesh.rotation.y += 0.015;
       if (mole.riseT >= 1) {
         mole.state = 'idle';
-        mole.idleTimer = mole.isYellow ? 25000 : (12000 + Math.random() * 14000);
+        mole.idleTimer = mole.isYellow ? 25000 : mole.isBlue ? 20000 : (12000 + Math.random() * 14000);
         sndMoleSqueak();
-        if (mole.isYellow) {
+        if (mole.isBlue) {
+          showTip('💙 A blue fairy mole appeared! Click it to rescue it!');
+        } else if (mole.isYellow) {
           showTip('✨ A bright yellow mole is waiting for you! Click it!');
         } else {
           showTip('🐾 A mole appeared! Click it to pay 10 🪙 or it will refill the hole.');
@@ -11208,6 +11673,30 @@ function tickMineMoles(dt, now) {
       // Bob & look around
       mole.mesh.position.y = 0.13 + Math.sin(now * 0.0028 + mole.x) * 0.025;
       mole.mesh.rotation.y = Math.sin(now * 0.0008 + mole.z) * 1.2;
+      // Blue mole: wander around + wing flutter
+      if (mole.isBlue) {
+        mole.wanderTimer -= dt;
+        if (mole.wanderTimer <= 0) {
+          mole.wanderAngle += (Math.random() - 0.5) * 1.5;
+          mole.wanderTimer = 800 + Math.random() * 1200;
+        }
+        const wx = Math.sin(mole.wanderAngle) * dt * 0.0004;
+        const wz = Math.cos(mole.wanderAngle) * dt * 0.0004;
+        mole.mesh.position.x += wx;
+        mole.mesh.position.z += wz;
+        // Clamp to stay near origin tile
+        const ox = mole.x + 0.5, oz = mole.z + 0.5;
+        const dx = mole.mesh.position.x - ox, dz = mole.mesh.position.z - oz;
+        if (Math.sqrt(dx*dx + dz*dz) > 0.4) {
+          mole.wanderAngle = Math.atan2(-dx, -dz);
+        }
+        mole.mesh.rotation.y = mole.wanderAngle;
+        // Wing flutter
+        const wL = mole.mesh.getObjectByName('wingL');
+        const wR = mole.mesh.getObjectByName('wingR');
+        if (wL) wL.scale.y = 0.8 + Math.sin(now * 0.012) * 0.3;
+        if (wR) wR.scale.y = 0.8 + Math.sin(now * 0.012 + 1) * 0.3;
+      }
       // Sparkle animation for yellow mole
       if (mole.isYellow) {
         for (let si = 0; si < 5; si++) {
@@ -11224,8 +11713,8 @@ function tickMineMoles(dt, now) {
       mole.sinkT = Math.min(1, mole.sinkT + dt * 0.0007);
       mole.mesh.position.y = 0.13 - mole.sinkT * 0.38;
       if (mole.sinkT >= 1) {
-        // Yellow moles don't refill tiles
-        if (!mole.isYellow) {
+        // Yellow/blue moles don't refill tiles
+        if (!mole.isYellow && !mole.isBlue) {
           const td = mineTileGrid[mole.x] && mineTileGrid[mole.x][mole.z];
           if (td && td.isDug) {
             td.isDug = false;
@@ -11240,6 +11729,7 @@ function tickMineMoles(dt, now) {
           }
         }
         if (mole.isYellow) yellowMoleActive = null;
+        if (mole.isBlue) { const st = _blueMoleSpeechTimers.get(mole); if (st) { clearInterval(st); _blueMoleSpeechTimers.delete(mole); } }
         mineScene.remove(mole.mesh);
         removeMoleLabel(mole);
         mineMoles.splice(i, 1);
@@ -11247,6 +11737,7 @@ function tickMineMoles(dt, now) {
     } else if (mole.state === 'dismissed') {
       mole.mesh.position.y -= dt * 0.0006;
       if (mole.mesh.position.y < -0.3) {
+        if (mole.isBlue) { const st = _blueMoleSpeechTimers.get(mole); if (st) { clearInterval(st); _blueMoleSpeechTimers.delete(mole); } }
         mineScene.remove(mole.mesh);
         removeMoleLabel(mole);
         mineMoles.splice(i, 1);
@@ -11535,6 +12026,7 @@ function doSleep() {
     checkUniversityUnlock();
     checkBakeryUnlock();
     checkUpgradeCompletion();
+    trainDonatedToday = false;
     mineLevel = 1;
     closeRopeBubbles();
     if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
@@ -12395,6 +12887,7 @@ function switchToTown() {
   if (chickenCoopMesh) chickenCoopMesh.visible = false;
   blightBugs.forEach(b => { b.el.style.visibility = 'hidden'; });
   [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblSpelunker, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'block');
+  if (lblTrain) lblTrain.style.display = 'block';
   if (roboSweeper) roboSweeper.mesh.visible = false;
   if (eggcavator) eggcavator.mesh.visible = false;
   if (autoMower) autoMower.mesh.visible = false;
@@ -12444,6 +12937,8 @@ function switchToFarm() {
   updateHopperHUD();
   blightBugs.forEach(b => { b.el.style.visibility = ''; });
   [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblSpelunker, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
+  if (lblTrain) lblTrain.style.display = 'none';
+  hideTownMoleHammers();
   if (roboSweeper) roboSweeper.mesh.visible = true;
   if (eggcavator) eggcavator.mesh.visible = true;
   if (autoMower) autoMower.mesh.visible = true;
@@ -13379,6 +13874,15 @@ function openSpelunkerBunker() {
   if (!hasBackpack) bombStatus.textContent = '⚠️ Requires backpack';
   else bombStatus.textContent = '';
 
+  // Warp drill row
+  const warpBtn = document.getElementById('spelunk-warp-btn');
+  const warpStatus = document.getElementById('spelunk-warp-status');
+  const canWarp = hasBackpack && gold >= WARP_DRILL_PRICE && backpackItems.length < backpackSlots;
+  warpBtn.disabled = !canWarp;
+  warpBtn.style.opacity = canWarp ? '1' : '0.45';
+  if (!hasBackpack) warpStatus.textContent = '⚠️ Requires backpack';
+  else warpStatus.textContent = '';
+
   document.getElementById('spelunker-overlay').style.display = 'flex';
 }
 
@@ -13403,7 +13907,19 @@ function buyBomb() {
   backpackItems.push({ type: 'bomb', emoji: '💣', name: 'Bomb' });
   updateBackpackUI();
   showTip('💣 Bomb stowed in backpack! Use it in the mine.');
-  openSpelunkerBunker(); // refresh
+  openSpelunkerBunker();
+}
+
+function buyWarpDrill() {
+  if (!hasBackpack) { showTip('⚠️ You need a backpack to carry drills!'); return; }
+  if (gold < WARP_DRILL_PRICE) { showTip('⚠️ Not enough gold!'); return; }
+  if (backpackItems.length >= backpackSlots) { showTip('🎒 Backpack is full!'); return; }
+  gold -= WARP_DRILL_PRICE;
+  updateGoldUI();
+  backpackItems.push({ type: 'warpDrill', emoji: '🌀', name: 'Warp Drill' });
+  updateBackpackUI();
+  showTip('🌀 Warp Drill stowed in backpack! Use it in the mine.');
+  openSpelunkerBunker();
 }
 
 function openRoboticsShop() {
@@ -13731,6 +14247,14 @@ canvas.addEventListener('click', e => {
     }
     if (toolUpgrading.pickaxe) { showTip('🔨 Pickaxe is being upgraded at the blacksmith!'); return; }
     hitMineRock(x, z);
+    // AOE: hit adjacent rocks
+    for (const [dx, dz] of toolAoeOffsets('pickaxe')) {
+      const nx = x + dx, nz = z + dz;
+      if (nx >= 0 && nx < MINE_GRID && nz >= 0 && nz < MINE_GRID) {
+        const ntd = mineTileGrid[nx][nz];
+        if (ntd && ntd.hasRock) hitMineRock(nx, nz);
+      }
+    }
     return;
   }
   if ((type === 'floor' || (type === 'tunnel' && !td.tunnelRevealed)) && !td.hasRock) {
@@ -13739,7 +14263,16 @@ canvas.addEventListener('click', e => {
     if (currentTool !== TOOL.HOE) {
       showTip('⚠️ Use the Hoe to dig empty tiles!'); return;
     }
+    if (toolUpgrading.hoe) { showTip('🔨 Hoe is being upgraded at the blacksmith!'); return; }
     digMineTile(x, z);
+    // AOE: dig adjacent tiles
+    for (const [dx, dz] of toolAoeOffsets('hoe')) {
+      const nx = x + dx, nz = z + dz;
+      if (nx >= 0 && nx < MINE_GRID && nz >= 0 && nz < MINE_GRID) {
+        const ntd = mineTileGrid[nx][nz];
+        if (ntd && !ntd.hasRock && !ntd.isDug) digMineTile(nx, nz);
+      }
+    }
     return;
   }
 });
@@ -13768,7 +14301,8 @@ canvas.addEventListener('click', e => {
       document.getElementById('church-overlay').style.display === 'flex' ||
       document.getElementById('blacksmith-overlay').style.display === 'flex' ||
       document.getElementById('university-overlay').style.display === 'flex' ||
-      document.getElementById('spelunker-overlay').style.display === 'flex') return;
+      document.getElementById('spelunker-overlay').style.display === 'flex' ||
+      document.getElementById('train-menu-overlay')) return;
   const rect = canvas.getBoundingClientRect();
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
@@ -13785,6 +14319,7 @@ canvas.addEventListener('click', e => {
   if (bld === 'university')  openUniversity();
   if (bld === 'bakery')      openBakery();
   if (bld === 'spelunker')   openSpelunkerBunker();
+  if (bld === 'trainMoles')  clickTrainMoles();
 });
 
 // Town label hover feedback
@@ -13794,7 +14329,7 @@ canvas.addEventListener('mousemove', e => {
   const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
   const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
   townRaycaster.setFromCamera({ x: mx, y: my }, camera);
-  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...bakeryMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...spelunkerMeshes, ...churchMeshes, ...blacksmithMeshes, ...universityMeshes], false);
+  const hits = townRaycaster.intersectObjects([...supplyMeshes, ...restaurantMeshes, ...bakeryMeshes, ...animalMeshes, ...roboticsBuiltMeshes, ...spelunkerMeshes, ...churchMeshes, ...blacksmithMeshes, ...universityMeshes, ...trainMeshes], false);
   canvas.style.cursor = hits.length ? 'pointer' : 'default';
 });
 
