@@ -11318,6 +11318,7 @@ function hideTownMoleHammers() {
 function buildTrainArea() {
   trainGroup = new THREE.Group();
   trainGroup.position.set(8, 0, -9);
+  trainGroup.scale.setScalar(1.25);
   townScene.add(trainGroup);
   updateTrainConstruction();
 }
@@ -11395,7 +11396,26 @@ function updateTrainConstruction() {
     }
   }
 
+  // When complete, extend tracks to the horizon (negative Z = into background)
+  if (segs >= TRAIN_DONATIONS_MAX) {
+    const startZ = -2 - 1.2; // just past the first construction segment
+    for (let i = 0; i < 25; i++) {
+      const zOff = startZ - i * 1.5;
+      [-0.35, 0.35].forEach(offset => {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 1.5), railMat);
+        rail.position.set(offset, 0.06, zOff);
+        trainGroup.add(rail);
+      });
+      for (let t = 0; t < 3; t++) {
+        const tie = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.05, 0.15), tieMat);
+        tie.position.set(0, 0.02, zOff + t * 0.45 - 0.4);
+        trainGroup.add(tie);
+      }
+    }
+  }
+
   // Mark all meshes for raycasting
+  trainMeshes.length = 0;
   trainGroup.traverse(m => { if (m.isMesh) { m.userData.building = 'trainMoles'; trainMeshes.push(m); } });
 
   // Remove sign if complete
