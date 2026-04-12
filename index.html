@@ -1033,6 +1033,28 @@
   </div>
 </div>
 
+<!-- Dev Panel -->
+<button id="dev-btn" onclick="toggleDevPanel()" style="display:none;position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(255,0,0,0.15);border:1px solid rgba(255,0,0,0.3);color:#f88;font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:monospace;opacity:0.5;">DEV</button>
+<div id="dev-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;overflow-y:auto;" onclick="if(event.target===this)toggleDevPanel()">
+  <div id="dev-panel" style="position:relative;margin:40px auto;max-width:480px;background:#1a1a2e;border:1px solid #444;border-radius:12px;padding:20px;color:#ccc;font-family:monospace;font-size:13px;">
+    <div style="font-size:16px;margin-bottom:12px;color:#f88;">Developer Panel</div>
+    <button onclick="devAddResources()" style="padding:6px 16px;margin-bottom:14px;border:1px solid #4a4;border-radius:6px;background:rgba(40,120,40,0.3);color:#8f8;cursor:pointer;font-family:monospace;font-size:12px;">+ 1000g, +50 all materials & seeds</button>
+    <div style="border-top:1px solid #333;margin:10px 0;"></div>
+    <div style="font-size:14px;margin-bottom:8px;color:#aaf;">Town Buildings</div>
+    <div id="dev-milestones"></div>
+    <div style="border-top:1px solid #333;margin:10px 0;"></div>
+    <div style="font-size:14px;margin-bottom:8px;color:#aaf;">Farm Unlocks</div>
+    <div id="dev-farm-unlocks"></div>
+    <div style="border-top:1px solid #333;margin:10px 0;"></div>
+    <div style="font-size:14px;margin-bottom:8px;color:#aaf;">Tool Upgrades</div>
+    <div id="dev-tools"></div>
+    <div style="border-top:1px solid #333;margin:10px 0;"></div>
+    <div style="font-size:14px;margin-bottom:8px;color:#aaf;">Misc</div>
+    <div id="dev-misc"></div>
+    <button onclick="toggleDevPanel()" style="margin-top:14px;padding:5px 16px;border:1px solid #666;border-radius:6px;background:transparent;color:#aaa;cursor:pointer;font-family:monospace;">Close</button>
+  </div>
+</div>
+
 <!-- Stamina bar -->
 <div id="stamina-wrap">
   <span id="stamina-label">⚡</span>
@@ -1056,6 +1078,7 @@
 </div>
 
 <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
 <script>
 // ================================================================
@@ -6377,6 +6400,230 @@ function tickCrows(now) {
 }
 
 // ================================================================
+//  PET CAT (rescued from mine)
+// ================================================================
+let petCat = null; // { mesh, state, wx, wz, targetX, targetZ, ... }
+const PET_CAT_BARN_POS = { x: -5.5, z: 1.5 }; // sleeps inside/near barn
+const PET_CAT_AWAKE_START = 0.25; // dayPhase when cat wakes up
+const PET_CAT_AWAKE_END   = 0.42; // dayPhase when cat goes back to sleep
+const PET_CAT_SPEED       = 0.008;
+
+function makePetCatMesh() {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+  // Body
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 0.3, 8), bodyMat);
+  body.position.y = 0.2; g.add(body);
+  // Head
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), bodyMat);
+  head.position.set(0, 0.4, 0.1); head.name = 'catHead'; g.add(head);
+  // Ears
+  const earL = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.08, 4), bodyMat);
+  earL.position.set(-0.06, 0.52, 0.1); g.add(earL);
+  const earR = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.08, 4), bodyMat);
+  earR.position.set(0.06, 0.52, 0.1); g.add(earR);
+  // Eyes — bright yellow with glow
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xFFFF00 });
+  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 6), eyeMat);
+  eyeL.position.set(-0.045, 0.42, 0.19); eyeL.name = 'catEyeL'; g.add(eyeL);
+  const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 6), eyeMat);
+  eyeR.position.set(0.045, 0.42, 0.19); eyeR.name = 'catEyeR'; g.add(eyeR);
+  // Tail
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.015, 0.28, 6), bodyMat);
+  tail.position.set(0, 0.22, -0.18); tail.rotation.x = -0.5; tail.name = 'catTail'; g.add(tail);
+  return g;
+}
+
+function spawnPetCat() {
+  if (petCat) return; // already exists
+  const mesh = makePetCatMesh();
+  mesh.position.set(PET_CAT_BARN_POS.x, 0, PET_CAT_BARN_POS.z - 1);
+  scene.add(mesh);
+  petCat = {
+    mesh,
+    state: 'sleeping', // sleeping | wandering | hunting | pouncing | crowChase
+    wx: PET_CAT_BARN_POS.x,
+    wz: PET_CAT_BARN_POS.z - 1,
+    targetX: 0, targetZ: 0,
+    huntTarget: null,     // hopper reference
+    crowTarget: null,     // crow reference
+    pounceStart: 0,
+    pounceDur: 400,
+    nextWanderTime: 0,
+  };
+  // Start sleeping
+  mesh.scale.y = 0.5;
+  mesh.rotation.y = Math.PI * 0.5;
+}
+
+function tickPetCat(now) {
+  if (!petCat) return;
+  const cat = petCat;
+  const isAwake = dayPhase >= PET_CAT_AWAKE_START && dayPhase < PET_CAT_AWAKE_END;
+
+  if (cat.state === 'sleeping') {
+    // Flatten and gentle breathing
+    cat.mesh.scale.y = 0.5 + Math.sin(now * 0.002) * 0.03;
+    cat.mesh.position.set(PET_CAT_BARN_POS.x, 0, PET_CAT_BARN_POS.z - 1);
+    // Eyes dim while sleeping
+    cat.mesh.traverse(c => {
+      if (c.name === 'catEyeL' || c.name === 'catEyeR') c.visible = false;
+    });
+
+    if (isAwake) {
+      cat.state = 'wandering';
+      cat.mesh.scale.y = 1;
+      cat.mesh.traverse(c => {
+        if (c.name === 'catEyeL' || c.name === 'catEyeR') c.visible = true;
+      });
+      cat.nextWanderTime = now + 2000;
+      cat.wx = PET_CAT_BARN_POS.x;
+      cat.wz = PET_CAT_BARN_POS.z - 1;
+    }
+    return;
+  }
+
+  // If it's sleep time, go back to barn
+  if (!isAwake && cat.state !== 'sleeping') {
+    const dx = PET_CAT_BARN_POS.x - cat.wx;
+    const dz = (PET_CAT_BARN_POS.z - 1) - cat.wz;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 0.3) {
+      cat.state = 'sleeping';
+      cat.mesh.scale.y = 0.5;
+      cat.mesh.rotation.y = Math.PI * 0.5;
+      cat.mesh.traverse(c => {
+        if (c.name === 'catEyeL' || c.name === 'catEyeR') c.visible = false;
+      });
+      return;
+    }
+    // Walk towards barn
+    cat.wx += (dx / dist) * PET_CAT_SPEED * 1.5;
+    cat.wz += (dz / dist) * PET_CAT_SPEED * 1.5;
+    cat.mesh.position.set(cat.wx, 0, cat.wz);
+    cat.mesh.rotation.y = Math.atan2(dx, dz);
+    return;
+  }
+
+  // Tail swish
+  cat.mesh.traverse(c => {
+    if (c.name === 'catTail') c.rotation.y = Math.sin(now * 0.005) * 0.4;
+  });
+
+  if (cat.state === 'wandering') {
+    // Occasionally try to hunt a grasshopper
+    if (hoppers.length > 0 && Math.random() < 0.005) {
+      let nearest = null, nearDist = 999;
+      for (const h of hoppers) {
+        const d = Math.hypot(h.mesh.position.x - cat.wx, h.mesh.position.z - cat.wz);
+        if (d < nearDist) { nearDist = d; nearest = h; }
+      }
+      if (nearest) {
+        cat.state = 'hunting';
+        cat.huntTarget = nearest;
+      }
+    }
+    // Occasionally chase a crow
+    if (crows.length > 0 && Math.random() < 0.002) {
+      const crow = crows[Math.floor(Math.random() * crows.length)];
+      if (crow.state === 'perching' || crow.state === 'eating') {
+        cat.state = 'crowChase';
+        cat.crowTarget = crow;
+      }
+    }
+
+    // Random wandering
+    if (now > cat.nextWanderTime) {
+      cat.targetX = -3 + Math.random() * (GRID + 6);
+      cat.targetZ = -3 + Math.random() * (GRID + 6);
+      cat.nextWanderTime = now + 4000 + Math.random() * 6000;
+    }
+    const dx = cat.targetX - cat.wx;
+    const dz = cat.targetZ - cat.wz;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 0.2) {
+      cat.wx += (dx / dist) * PET_CAT_SPEED;
+      cat.wz += (dz / dist) * PET_CAT_SPEED;
+      cat.mesh.rotation.y = Math.atan2(dx, dz);
+    }
+    cat.mesh.position.set(cat.wx, 0, cat.wz);
+
+  } else if (cat.state === 'hunting') {
+    const h = cat.huntTarget;
+    if (!h || !hoppers.includes(h)) {
+      cat.state = 'wandering';
+      cat.huntTarget = null;
+      cat.mesh.scale.y = 1;
+      return;
+    }
+    const dx = h.mesh.position.x - cat.wx;
+    const dz = h.mesh.position.z - cat.wz;
+    const dist = Math.hypot(dx, dz);
+    cat.mesh.rotation.y = Math.atan2(dx, dz);
+    if (dist < 0.3) {
+      // Pounce!
+      cat.state = 'pouncing';
+      cat.pounceStart = now;
+    } else {
+      // Stalk towards grasshopper (slower, crouched)
+      cat.wx += (dx / dist) * PET_CAT_SPEED * 0.6;
+      cat.wz += (dz / dist) * PET_CAT_SPEED * 0.6;
+      cat.mesh.scale.y = 0.75; // crouch
+    }
+    cat.mesh.position.set(cat.wx, 0, cat.wz);
+
+  } else if (cat.state === 'pouncing') {
+    const elapsed = now - cat.pounceStart;
+    // Jump arc
+    const t = Math.min(1, elapsed / cat.pounceDur);
+    cat.mesh.position.y = Math.sin(t * Math.PI) * 0.35;
+    cat.mesh.scale.y = 1;
+    if (t >= 1) {
+      cat.mesh.position.y = 0;
+      // Hit the grasshopper (deal 1 damage like a player click)
+      const h = cat.huntTarget;
+      if (h && hoppers.includes(h)) {
+        hitHopper(h);
+      }
+      cat.huntTarget = null;
+      cat.state = 'wandering';
+      cat.nextWanderTime = now + 3000;
+    }
+
+  } else if (cat.state === 'crowChase') {
+    const crow = cat.crowTarget;
+    if (!crow || !crows.includes(crow)) {
+      cat.state = 'wandering';
+      cat.crowTarget = null;
+      return;
+    }
+    const dx = crow.mesh.position.x - cat.wx;
+    const dz = crow.mesh.position.z - cat.wz;
+    const dist = Math.hypot(dx, dz);
+    cat.mesh.rotation.y = Math.atan2(dx, dz);
+    if (dist < 0.5) {
+      // Jump at crow (to no effect)
+      cat.mesh.position.y = Math.sin(now * 0.02) * 0.3;
+      // Give up after a moment
+      if (Math.random() < 0.02) {
+        cat.mesh.position.y = 0;
+        cat.state = 'wandering';
+        cat.crowTarget = null;
+        cat.nextWanderTime = now + 3000;
+      }
+    } else if (dist > 8) {
+      // Too far, give up
+      cat.state = 'wandering';
+      cat.crowTarget = null;
+    } else {
+      cat.wx += (dx / dist) * PET_CAT_SPEED * 1.4;
+      cat.wz += (dz / dist) * PET_CAT_SPEED * 1.4;
+    }
+    cat.mesh.position.set(cat.wx, cat.mesh.position.y, cat.wz);
+  }
+}
+
+// ================================================================
 //  FLOWER / BEE / BEEHIVE SYSTEM
 // ================================================================
 
@@ -9613,6 +9860,7 @@ function animate(now) {
     tickUFO(now);
     tickPigs(now);
     tickCrows(now);
+    tickPetCat(now);
     tickRoboSweeper(now);
     tickEggcavator(now);
     tickAutoMower(now);
@@ -9661,6 +9909,9 @@ function animate(now) {
   } else if (currentView === 'mine') {
     tickMine(now);
     renderer.render(mineScene, camera);
+  } else if (currentView === 'spaceCity') {
+    renderer.render(spaceCityScene, camera);
+    updateSpaceCityLabels();
   } else {
     tickBlacksmithSmoke(now);
     updateTownMolePositions();
@@ -9697,6 +9948,239 @@ let placingBomb         = false;
 let placingBombIdx      = -1;   // backpack slot index of the bomb being placed
 let bombGhostMesh       = null; // translucent bomb preview mesh
 const mineBombs         = []; // active bombs in mine {mesh, x, z, timer, countdown, labelEl}
+
+// ---- Cat rescue mine level ----
+const CAT_LEVEL_MIN     = 35;
+const CAT_LEVEL_CHANCE  = 0.45;
+let catRescued          = false;  // true once cat has been rescued (never encounter again)
+let isCatLevel          = false;  // true if current mine level is a cat level
+let mineCatMesh         = null;   // THREE.Group for the shivering cat
+let mineCatClickCount   = 0;      // how many times the cat has been clicked
+let mineCatLastClickMs  = 0;      // timestamp of last click
+let mineCatBubbleEl     = null;   // DOM speech bubble element
+let mineCatStandingUp   = false;  // true after cat stops shivering
+
+function makeMineCatMesh() {
+  const g = new THREE.Group();
+  // Body
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.35, 8), bodyMat);
+  body.position.y = 0.22; g.add(body);
+  // Head
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), bodyMat);
+  head.position.set(0, 0.48, 0.08); g.add(head);
+  // Ears
+  const earMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+  const earL = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.1, 4), earMat);
+  earL.position.set(-0.08, 0.6, 0.08); g.add(earL);
+  const earR = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.1, 4), earMat);
+  earR.position.set(0.08, 0.6, 0.08); g.add(earR);
+  // Eyes — bright yellow
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xFFFF00 });
+  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), eyeMat);
+  eyeL.position.set(-0.055, 0.5, 0.18); g.add(eyeL);
+  const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), eyeMat);
+  eyeR.position.set(0.055, 0.5, 0.18); g.add(eyeR);
+  // Tail
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.02, 0.3, 6), bodyMat);
+  tail.position.set(0, 0.25, -0.2); tail.rotation.x = -0.6; g.add(tail);
+  g.userData.isMineCat = true;
+  g.traverse(c => { if (c.isMesh) c.userData.isMineCat = true; });
+  return g;
+}
+
+function generateCatLevel(level) {
+  // Clear previous level as normal
+  mineTileGrid   = [];
+  mineTileMeshes = [];
+  mineRockMeshes = [];
+  mineDirtMeshes = [];
+  resetMineMoles();
+  resetMineCentipedes();
+  mineBombs.forEach(b => {
+    if (b.mesh) mineScene.remove(b.mesh);
+    if (b.blastMesh) mineScene.remove(b.blastMesh);
+    if (b.labelEl) b.labelEl.remove();
+  });
+  mineBombs.length = 0;
+  placingBomb = false;
+  if (bombGhostMesh) { mineScene.remove(bombGhostMesh); bombGhostMesh = null; }
+
+  // Tunnel position — still need one so user can leave if they say "no"
+  const tx = 1 + Math.floor(Math.random() * (MINE_GRID - 2));
+  const tz = 1 + Math.floor(Math.random() * (MINE_GRID - 2));
+  mineTunnelPos = { x: tx, z: tz };
+
+  if (mineScene.userData.levelGroup) mineScene.remove(mineScene.userData.levelGroup);
+  const levelGroup = new THREE.Group();
+  mineScene.userData.levelGroup = levelGroup;
+  mineScene.add(levelGroup);
+
+  for (let x = 0; x < MINE_GRID; x++) {
+    mineTileGrid[x]   = [];
+    mineTileMeshes[x] = [];
+    mineRockMeshes[x] = [];
+    mineDirtMeshes[x] = [];
+    for (let z = 0; z < MINE_GRID; z++) {
+      const tile = makeMineTileMesh(level, x, z, false);
+      levelGroup.add(tile);
+      mineTileMeshes[x][z] = tile;
+      const isTunnel = (x === tx && z === tz);
+      mineTileGrid[x][z] = {
+        x, z, hasRock: false, hp: 0, maxHp: 0, tier: 0,
+        isDug: false, isTunnel, tunnelRevealed: false,
+        origColor: tile.material.color.getHex(),
+      };
+      mineRockMeshes[x][z] = null;
+      if (isTunnel) {
+        const tm = makeTunnelMesh();
+        tm.position.set(x + 0.5, 0, z + 0.5);
+        tm.visible = false;
+        levelGroup.add(tm);
+        mineTileGrid[x][z].tunnelMesh = tm;
+      }
+      mineDirtMeshes[x][z] = null;
+    }
+  }
+
+  // Place the cat at center
+  isCatLevel = true;
+  mineCatClickCount = 0;
+  mineCatLastClickMs = 0;
+  mineCatStandingUp = false;
+  mineCatMesh = makeMineCatMesh();
+  const cx = MINE_GRID / 2, cz = MINE_GRID / 2;
+  mineCatMesh.position.set(cx, 0, cz);
+  mineCatMesh.scale.y = 0.7; // crouched/shivering
+  levelGroup.add(mineCatMesh);
+
+  if (level > deepestMineLevel) deepestMineLevel = level;
+  checkSpelunkerUnlock();
+  const levelEl = document.getElementById('mine-level-num');
+  if (levelEl) levelEl.textContent = level;
+  const bar = document.getElementById('mine-depth-bar');
+  if (bar) bar.style.width = ((level / MINE_MAX_LEVEL) * 100).toFixed(1) + '%';
+}
+
+function tickMineCat(now) {
+  if (!isCatLevel || !mineCatMesh) return;
+  // Shivering animation
+  if (!mineCatStandingUp) {
+    mineCatMesh.rotation.z = Math.sin(now * 0.025) * 0.06;
+    mineCatMesh.rotation.x = Math.cos(now * 0.03) * 0.04;
+  } else {
+    // Calm idle bob
+    mineCatMesh.position.y = Math.sin(now * 0.003) * 0.03;
+    mineCatMesh.rotation.z = 0;
+    mineCatMesh.rotation.x = 0;
+  }
+}
+
+function showCatBubble(text) {
+  if (mineCatBubbleEl) mineCatBubbleEl.remove();
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;padding:6px 14px;background:rgba(0,0,0,0.85);color:#fff;border-radius:12px;font-size:15px;pointer-events:none;z-index:300;white-space:nowrap;transition:opacity 0.3s;';
+  document.body.appendChild(el);
+  el.textContent = text;
+  mineCatBubbleEl = el;
+  // Position will be updated in tick
+  updateCatBubblePos();
+}
+
+function updateCatBubblePos() {
+  if (!mineCatBubbleEl || !mineCatMesh) return;
+  const v = new THREE.Vector3();
+  mineCatMesh.getWorldPosition(v);
+  v.y += 0.9;
+  v.project(camera);
+  const rect = canvas.getBoundingClientRect();
+  const sx = (v.x * 0.5 + 0.5) * rect.width + rect.left;
+  const sy = (-v.y * 0.5 + 0.5) * rect.height + rect.top;
+  mineCatBubbleEl.style.left = sx + 'px';
+  mineCatBubbleEl.style.top = sy + 'px';
+  mineCatBubbleEl.style.transform = 'translate(-50%, -100%)';
+}
+
+function hideCatBubble() {
+  if (mineCatBubbleEl) { mineCatBubbleEl.remove(); mineCatBubbleEl = null; }
+}
+
+function clickMineCat() {
+  const now = performance.now();
+  const elapsed = now - mineCatLastClickMs;
+  mineCatLastClickMs = now;
+
+  if (mineCatClickCount === 0) {
+    showCatBubble('❓ ?');
+    mineCatClickCount = 1;
+  } else if (mineCatClickCount === 1 && elapsed >= 1000) {
+    showCatBubble('😿 Oh, is this real? Can you help me?');
+    mineCatClickCount = 2;
+  } else if (mineCatClickCount === 2 && elapsed >= 1000) {
+    showCatBubble('😿 I was at the spelunker bunker, and I was playing with this purple warpy thing, I\'ve been stuck down here since');
+    mineCatClickCount = 3;
+    // Cat stops shivering and stands up
+    mineCatStandingUp = true;
+    mineCatMesh.scale.y = 1.0;
+  } else if (mineCatClickCount === 3 && elapsed >= 2000) {
+    hideCatBubble();
+    showCatRescuePrompt();
+    mineCatClickCount = 4;
+  }
+}
+
+function showCatRescuePrompt() {
+  showCatBubble('🐱 Rescue cat?');
+  // Create yes/no buttons
+  const btnDiv = document.createElement('div');
+  btnDiv.id = 'cat-rescue-btns';
+  btnDiv.style.cssText = 'position:fixed;z-index:301;display:flex;gap:10px;';
+  btnDiv.innerHTML = '<button onclick="rescueCat(true)" style="padding:6px 18px;font-size:15px;border-radius:8px;border:none;background:#4CAF50;color:#fff;cursor:pointer;">Yes</button><button onclick="rescueCat(false)" style="padding:6px 18px;font-size:15px;border-radius:8px;border:none;background:#f44336;color:#fff;cursor:pointer;">No</button>';
+  document.body.appendChild(btnDiv);
+  // Position below the bubble
+  const v = new THREE.Vector3();
+  mineCatMesh.getWorldPosition(v);
+  v.y += 0.5;
+  v.project(camera);
+  const rect = canvas.getBoundingClientRect();
+  const sx = (v.x * 0.5 + 0.5) * rect.width + rect.left;
+  const sy = (-v.y * 0.5 + 0.5) * rect.height + rect.top;
+  btnDiv.style.left = sx + 'px';
+  btnDiv.style.top = (sy + 10) + 'px';
+  btnDiv.style.transform = 'translate(-50%, 0)';
+}
+
+function rescueCat(yes) {
+  const btns = document.getElementById('cat-rescue-btns');
+  if (btns) btns.remove();
+  hideCatBubble();
+
+  if (yes) {
+    catRescued = true;
+    isCatLevel = false;
+    if (mineCatMesh) {
+      const lg = mineScene.userData.levelGroup;
+      if (lg) lg.remove(mineCatMesh);
+      mineCatMesh = null;
+    }
+    // Return to farm with the cat
+    switchFromMine();
+    switchToFarm();
+    showTip('🐱 You rescued the cat! It now lives on your farm!');
+    spawnPetCat();
+  } else {
+    // Dismiss cat, allow digging as normal — reveal tunnel on all tiles
+    isCatLevel = false;
+    if (mineCatMesh) {
+      const lg = mineScene.userData.levelGroup;
+      if (lg) lg.remove(mineCatMesh);
+      mineCatMesh = null;
+    }
+    // Regenerate the level as a normal level so user can dig
+    generateMineLevel(mineLevel);
+    showTip('😿 The cat disappeared into the shadows...');
+  }
+}
 
 // Mineral drop chances per level band
 function mineDropChances(level) {
@@ -10089,6 +10573,10 @@ function makeMineDirtMesh() {
 
 // ---- Generate a mine level ----
 function generateMineLevel(level) {
+  // Clear cat level state
+  isCatLevel = false;
+  hideCatBubble();
+  mineCatMesh = null;
   // Clear previous level meshes
   mineTileGrid   = [];
   mineTileMeshes = [];
@@ -10387,11 +10875,25 @@ function descendMine() {
   if (mineLevel >= MINE_MAX_LEVEL) {
     showTip('⛏️ You have reached the deepest level!'); return;
   }
+  // Clean up cat level state if leaving one
+  isCatLevel = false;
+  hideCatBubble();
+  const cbtns = document.getElementById('cat-rescue-btns');
+  if (cbtns) cbtns.remove();
+  if (mineCatMesh) { mineCatMesh = null; }
+
   // Record tunnel position for rope before generating new level
   const prevTunnel = { x: mineTunnelPos.x, z: mineTunnelPos.z };
   mineLevel++;
   if (repellentLevelsLeft > 0) repellentLevelsLeft--;
-  generateMineLevel(mineLevel);
+
+  // Check for cat rescue level
+  if (!catRescued && mineLevel >= CAT_LEVEL_MIN && Math.random() < CAT_LEVEL_CHANCE) {
+    generateCatLevel(mineLevel);
+  } else {
+    generateMineLevel(mineLevel);
+  }
+
   // Place rope at where the hole was
   if (mineRopeMesh) mineScene.remove(mineRopeMesh);
   mineRopeMesh = makeMineRopeMesh(prevTunnel.x, prevTunnel.z);
@@ -10483,6 +10985,13 @@ function switchFromMine() {
   if (mineRopeMesh) { mineScene.remove(mineRopeMesh); mineRopeMesh = null; }
   mineRopePos = null;
   mineLevel = 1;
+  // Clean up cat level
+  isCatLevel = false;
+  hideCatBubble();
+  const cbtns = document.getElementById('cat-rescue-btns');
+  if (cbtns) cbtns.remove();
+  mineCatMesh = null;
+  mineCatClickCount = 0;
 }
 
 // ---- Mine Bombs ----
@@ -10720,6 +11229,8 @@ function tickMine(now) {
   tickMineMoles(dt, now);
   tickMineCentipedes(dt, now);
   tickMineBombs(now);
+  tickMineCat(now);
+  if (mineCatBubbleEl) updateCatBubblePos();
 }
 
 // ================================================================
@@ -11498,12 +12009,454 @@ function openTrainMenu() {
   el.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:200;';
   el.onclick = e => { if (e.target === el) el.remove(); };
   el.innerHTML = `
-    <div style="background:#1a1a2e;border:2px solid #4488FF;border-radius:14px;padding:24px 32px;color:#fff;font-family:monospace;text-align:center;min-width:280px;">
-      <div style="font-size:1.2rem;margin-bottom:8px">🚄 Bullet Train</div>
-      <div style="color:#aaa;font-size:.85rem;margin-bottom:16px">Coming soon…</div>
-      <button onclick="document.getElementById('train-menu-overlay').remove()" style="padding:6px 18px;border:1px solid #666;border-radius:6px;cursor:pointer;font-family:monospace;background:transparent;color:#aaa;">Close</button>
+    <div style="background:#1a1a2e;border:2px solid #4488FF;border-radius:14px;padding:24px 32px;color:#fff;font-family:monospace;text-align:center;min-width:320px;">
+      <div style="font-size:1.2rem;margin-bottom:12px">🚄 Bullet Train — Destinations</div>
+      <button onclick="travelToSpaceCity()" style="display:block;width:100%;margin:8px 0;padding:10px 14px;border:none;border-radius:8px;cursor:pointer;font-family:monospace;font-size:.95rem;background:#224488;color:#fff;">🚀 Space City</button>
+      <button onclick="document.getElementById('train-menu-overlay').remove()" style="display:block;width:100%;margin:10px 0 0;padding:6px 18px;border:1px solid #666;border-radius:6px;cursor:pointer;font-family:monospace;background:transparent;color:#aaa;">Cancel</button>
     </div>`;
   document.body.appendChild(el);
+}
+
+// ================================================================
+//  SPACE CITY (Bullet Train Destination)
+// ================================================================
+const spaceCityScene = new THREE.Scene();
+spaceCityScene.fog = new THREE.Fog(0x88bbee, 35, 80);
+spaceCityScene.background = new THREE.Color(0x6EB5E8);
+
+const scAmbient = new THREE.AmbientLight(0xfff8f0, 0.7);
+spaceCityScene.add(scAmbient);
+const scSun = new THREE.DirectionalLight(0xffd580, 1.0);
+scSun.position.set(10, 20, 12);
+scSun.castShadow = true;
+spaceCityScene.add(scSun);
+
+const SC_CAM_POS    = new THREE.Vector3(0, 14, 18);
+const SC_CAM_TARGET = new THREE.Vector3(0, 0, -1);
+
+const scMeshes = { museum: [], welding: [], station: [], lab: [] };
+
+// Building positions — tight grid, station at bottom middle
+const SC_POSITIONS = {
+  museum:  new THREE.Vector3(-6, 0, -5),
+  lab:     new THREE.Vector3(0, 0, -5),
+  welding: new THREE.Vector3(6, 0, -5),
+  station: new THREE.Vector3(0, 0, 4),
+};
+function scBldPos(key) { return SC_POSITIONS[key].clone(); }
+
+// ---- Ground: mainland + coast + water + island ----
+(function buildSpaceCityGround() {
+  // Main land
+  const landMat = new THREE.MeshLambertMaterial({ color: 0x5a8a42 });
+  const land = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), landMat);
+  land.rotation.x = -Math.PI / 2;
+  land.position.set(0, -0.01, -1);
+  land.receiveShadow = true;
+  spaceCityScene.add(land);
+
+  // ---- Roads: horizontal + vertical grid lines ----
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
+  // Horizontal road connecting top-row buildings
+  const hRoad = new THREE.Mesh(new THREE.PlaneGeometry(18, 1.8), roadMat);
+  hRoad.rotation.x = -Math.PI / 2; hRoad.position.set(0, 0.015, -5);
+  spaceCityScene.add(hRoad);
+  // Vertical road from station up to top row
+  const vRoad = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 11), roadMat);
+  vRoad.rotation.x = -Math.PI / 2; vRoad.position.set(0, 0.015, -0.5);
+  spaceCityScene.add(vRoad);
+
+  // ---- Scaled-down background skyscrapers ----
+  const skColors = [0x7799AA, 0x6688AA, 0x8899AA, 0x6A7A8A, 0x8090A0, 0x5A6A7A];
+  const winMat = new THREE.MeshBasicMaterial({ color: 0xDDEEFF });
+  const skyscrapers = [];
+  for (let i = 0; i < 16; i++) {
+    const x = -14 + i * 1.9 + (Math.random() - 0.5) * 0.6;
+    const z = -14 - Math.random() * 4;
+    const h = 3 + Math.random() * 5;
+    const w = 1.0 + Math.random() * 1.0;
+    const d = 1.0 + Math.random() * 1.0;
+    skyscrapers.push({ x, z, h, w, d, col: skColors[Math.floor(Math.random() * skColors.length)] });
+  }
+  for (let i = 0; i < 12; i++) {
+    const x = -12 + i * 2.1 + (Math.random() - 0.5) * 0.8;
+    const z = -18 - Math.random() * 3;
+    const h = 5 + Math.random() * 6;
+    const w = 1.2 + Math.random() * 1.2;
+    const d = 1.2 + Math.random() * 1.2;
+    skyscrapers.push({ x, z, h, w, d, col: skColors[Math.floor(Math.random() * skColors.length)] });
+  }
+  skyscrapers.forEach(s => {
+    const mat = new THREE.MeshLambertMaterial({ color: s.col });
+    const b = new THREE.Mesh(new THREE.BoxGeometry(s.w, s.h, s.d), mat);
+    b.position.set(s.x, s.h / 2, s.z);
+    spaceCityScene.add(b);
+    // Windows on all 4 sides
+    const rows = Math.floor(s.h / 1.4);
+    for (let row = 0; row < rows; row++) {
+      const wy = 1.2 + row * 1.2;
+      const cols_x = Math.max(1, Math.floor(s.w / 0.7));
+      for (let c = 0; c < cols_x; c++) {
+        const wx = -s.w / 2 + 0.35 + c * (s.w / cols_x);
+        const wf = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.02), winMat);
+        wf.position.set(s.x + wx, wy, s.z + s.d / 2 + 0.01);
+        spaceCityScene.add(wf);
+        const wb = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.02), winMat);
+        wb.position.set(s.x + wx, wy, s.z - s.d / 2 - 0.01);
+        spaceCityScene.add(wb);
+      }
+      const cols_z = Math.max(1, Math.floor(s.d / 0.7));
+      for (let c = 0; c < cols_z; c++) {
+        const wz = -s.d / 2 + 0.35 + c * (s.d / cols_z);
+        const wl = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.4, 0.3), winMat);
+        wl.position.set(s.x - s.w / 2 - 0.01, wy, s.z + wz);
+        spaceCityScene.add(wl);
+        const wr = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.4, 0.3), winMat);
+        wr.position.set(s.x + s.w / 2 + 0.01, wy, s.z + wz);
+        spaceCityScene.add(wr);
+      }
+    }
+  });
+
+  // ---- Simple filler houses (plain cubes, no roof/door) ----
+  const houseColors = [0xCCCCCC, 0xBBBBBB, 0x9B7B5B, 0x8B6B4B, 0xA08060, 0xB0A090, 0x7A6A5A];
+  const housePositions = [];
+  for (let i = 0; i < 40; i++) {
+    const hx = (Math.random() - 0.5) * 24;
+    const hz = (Math.random() - 0.5) * 20 - 1;
+    // Skip if too close to any key building or station
+    let tooClose = false;
+    Object.keys(SC_POSITIONS).forEach(key => {
+      const bp = SC_POSITIONS[key];
+      if (Math.hypot(hx - bp.x, hz - bp.z) < 4.5) tooClose = true;
+    });
+    if (tooClose) continue;
+    // Skip if on roads
+    if (Math.abs(hx) < 1.5 && hz > -6 && hz < 5) continue; // vertical road
+    if (hz > -6.2 && hz < -3.8 && Math.abs(hx) < 10) continue; // horizontal road
+    let crowded = false;
+    for (const hp of housePositions) {
+      if (Math.hypot(hx - hp.x, hz - hp.z) < 1.8) { crowded = true; break; }
+    }
+    if (crowded) continue;
+    housePositions.push({ x: hx, z: hz });
+    const hw = 0.6 + Math.random() * 0.8;
+    const hh = 0.6 + Math.random() * 0.8;
+    const hd = 0.6 + Math.random() * 0.8;
+    const houseCol = houseColors[Math.floor(Math.random() * houseColors.length)];
+    const house = new THREE.Mesh(new THREE.BoxGeometry(hw, hh, hd), new THREE.MeshLambertMaterial({ color: houseCol }));
+    house.position.set(hx, hh / 2, hz);
+    spaceCityScene.add(house);
+  }
+
+  // ---- Clouds ----
+  const cloudMat = new THREE.MeshLambertMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.7 });
+  const cloudPositions = [
+    { x: -10, y: 16, z: -15 }, { x: 8, y: 18, z: -10 }, { x: -5, y: 14, z: 5 },
+    { x: 15, y: 17, z: -20 }, { x: -18, y: 15, z: -8 }, { x: 3, y: 19, z: -25 },
+    { x: 20, y: 16, z: 0 }, { x: -15, y: 18, z: -22 }, { x: 12, y: 14, z: 8 },
+  ];
+  cloudPositions.forEach(cp => {
+    const cg = new THREE.Group();
+    const count = 3 + Math.floor(Math.random() * 3);
+    for (let j = 0; j < count; j++) {
+      const r = 1 + Math.random() * 1.5;
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 7, 5), cloudMat);
+      puff.position.set((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 2);
+      puff.scale.y = 0.4 + Math.random() * 0.2;
+      cg.add(puff);
+    }
+    cg.position.set(cp.x, cp.y, cp.z);
+    spaceCityScene.add(cg);
+  });
+})();
+
+// ---- Train Station (center, smaller) ----
+(function buildTrainStation() {
+  const grp = new THREE.Group();
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0xBBBBBB });
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x3355AA });
+  const platMat = new THREE.MeshLambertMaterial({ color: 0x999999 });
+  const railMat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+  const tieMat  = new THREE.MeshLambertMaterial({ color: 0x6B4226 });
+
+  // Platform
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(4, 0.3, 2), platMat);
+  platform.position.y = 0.15; grp.add(platform);
+  // Station building
+  const bldg = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.8, 1.5), wallMat);
+  bldg.position.set(0, 1.2, -0.6); grp.add(bldg);
+  // Canopy
+  const canopy = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.1, 2.8), roofMat);
+  canopy.position.set(0, 2.2, 0); grp.add(canopy);
+  // Pillars
+  const pilMat = new THREE.MeshLambertMaterial({ color: 0x666688 });
+  [[-1.8, 1.0], [1.8, 1.0], [-1.8, -1.0], [1.8, -1.0]].forEach(([px, pz]) => {
+    const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.9, 6), pilMat);
+    pil.position.set(px, 1.1, pz); grp.add(pil);
+  });
+  // Short tracks
+  for (let i = 0; i < 3; i++) {
+    [-0.3, 0.3].forEach(offset => {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 1.2), railMat);
+      rail.position.set(offset, 0.03, 2 + i * 1.2);
+      grp.add(rail);
+    });
+    for (let t = 0; t < 2; t++) {
+      const tie = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.04, 0.14), tieMat);
+      tie.position.set(0, 0.01, 2 + i * 1.2 + t * 0.5 - 0.2);
+      grp.add(tie);
+    }
+  }
+  // Clock
+  const clockFace = new THREE.Mesh(new THREE.CircleGeometry(0.22, 12), new THREE.MeshBasicMaterial({ color: 0xFFFFFF }));
+  clockFace.position.set(0, 1.85, -0.26); grp.add(clockFace);
+  const clockRim = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.24, 12), new THREE.MeshBasicMaterial({ color: 0x333333 }));
+  clockRim.position.set(0, 1.85, -0.25); grp.add(clockRim);
+
+  grp.position.copy(SC_POSITIONS.station);
+  grp.traverse(m => { if (m.isMesh) { m.userData.building = 'sc_station'; scMeshes.station.push(m); } });
+  spaceCityScene.add(grp);
+})();
+
+// ---- Space Museum ----
+(function buildSpaceMuseum() {
+  const grp = new THREE.Group();
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0xCCCCCC });
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x888899 });
+  const trimMat = new THREE.MeshLambertMaterial({ color: 0x4466AA });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(5, 3.5, 4), wallMat);
+  body.position.y = 1.75; grp.add(body);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.8, 12, 8, 0, Math.PI*2, 0, Math.PI/2), roofMat);
+  dome.position.y = 3.5; grp.add(dome);
+  const portico = new THREE.Mesh(new THREE.BoxGeometry(2, 2.5, 1), trimMat);
+  portico.position.set(0, 1.25, 2.5); grp.add(portico);
+  [-0.7, 0.7].forEach(x => {
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.5, 8), new THREE.MeshLambertMaterial({ color: 0xEEEEEE }));
+    col.position.set(x, 1.25, 3.02); grp.add(col);
+  });
+  // Rocket
+  const rocketBody = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.35, 3, 8), new THREE.MeshLambertMaterial({ color: 0xEEEEEE }));
+  rocketBody.position.set(3.5, 1.5, 0); grp.add(rocketBody);
+  const noseCone = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.8, 8), new THREE.MeshLambertMaterial({ color: 0xFF4400 }));
+  noseCone.position.set(3.5, 3.4, 0); grp.add(noseCone);
+  const finMat = new THREE.MeshLambertMaterial({ color: 0xCC3300 });
+  [0, Math.PI/2, Math.PI, Math.PI*1.5].forEach(a => {
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, 0.4), finMat);
+    fin.position.set(3.5 + Math.sin(a)*0.3, 0.3, Math.cos(a)*0.3);
+    fin.rotation.y = a; grp.add(fin);
+  });
+  const pos = scBldPos('museum');
+  grp.position.copy(pos);
+  grp.traverse(m => { if (m.isMesh) { m.userData.building = 'sc_museum'; scMeshes.museum.push(m); } });
+  spaceCityScene.add(grp);
+})();
+
+// ---- Custom Welding Factory ----
+(function buildWeldingFactory() {
+  const grp = new THREE.Group();
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0x777777 });
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(5, 3, 4), wallMat);
+  body.position.y = 1.5; grp.add(body);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.2, 4.8), roofMat);
+  roof.position.y = 3.1; roof.rotation.z = 0.08; grp.add(roof);
+  const rdoor = new THREE.Mesh(new THREE.BoxGeometry(2, 2.2, 0.1), new THREE.MeshLambertMaterial({ color: 0xBB6622 }));
+  rdoor.position.set(0, 1.1, 2.05); grp.add(rdoor);
+  const sdoor = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.1), new THREE.MeshLambertMaterial({ color: 0x555555 }));
+  sdoor.position.set(-1.8, 0.8, 2.05); grp.add(sdoor);
+  const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 2.5, 8), new THREE.MeshLambertMaterial({ color: 0x444444 }));
+  stack.position.set(2, 4.2, -1); grp.add(stack);
+  const sparkMat = new THREE.MeshBasicMaterial({ color: 0xFFAA00 });
+  for (let i = 0; i < 3; i++) {
+    const sp = new THREE.Mesh(new THREE.SphereGeometry(0.06, 4, 3), sparkMat);
+    sp.position.set(-0.3 + i * 0.3, 2.6, 2.08); grp.add(sp);
+  }
+  const winMat = new THREE.MeshLambertMaterial({ color: 0xAABBCC });
+  for (let i = 0; i < 3; i++) {
+    const win = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.1), winMat);
+    win.position.set(-1.5 + i * 1.5, 2.2, -2.05); grp.add(win);
+  }
+  const pos = scBldPos('welding');
+  grp.position.copy(pos);
+  grp.traverse(m => { if (m.isMesh) { m.userData.building = 'sc_welding'; scMeshes.welding.push(m); } });
+  spaceCityScene.add(grp);
+})();
+
+// ---- Materials Lab (loaded from GLTF) ----
+(function buildMaterialsLab() {
+  const grp = new THREE.Group();
+  grp.position.copy(scBldPos('lab'));
+  spaceCityScene.add(grp);
+
+  const loader = new THREE.GLTFLoader();
+  loader.load('materialslabgeo.gltf', (gltf) => {
+    const model = gltf.scene;
+    grp.add(model);
+    model.traverse(m => {
+      if (m.isMesh) {
+        m.userData.building = 'sc_lab';
+        scMeshes.lab.push(m);
+      }
+    });
+  }, undefined, (err) => {
+    console.error('Failed to load materials lab GLTF:', err);
+    // Fallback: simple placeholder cube
+    const fallback = new THREE.Mesh(
+      new THREE.BoxGeometry(3, 3, 3),
+      new THREE.MeshLambertMaterial({ color: 0xDDDDDD })
+    );
+    fallback.position.y = 1.5;
+    fallback.userData.building = 'sc_lab';
+    scMeshes.lab.push(fallback);
+    grp.add(fallback);
+  });
+})();
+
+// ---- Space City labels ----
+const lblScMuseum   = makeTownLabel('🚀 Space Museum', 'lbl-sc-museum');
+const lblScWelding  = makeTownLabel('🔧 Welding Factory', 'lbl-sc-welding');
+const lblScLab      = makeTownLabel('🧪 Materials Lab', 'lbl-sc-lab');
+const lblScStation  = makeTownLabel('🚄 Train Station', 'lbl-sc-station');
+const SC_LABELS = [
+  { el: lblScMuseum,   pos: scBldPos('museum').add(new THREE.Vector3(0, 5, 0)) },
+  { el: lblScWelding,  pos: scBldPos('welding').add(new THREE.Vector3(0, 5, 0)) },
+  { el: lblScLab,      pos: scBldPos('lab').add(new THREE.Vector3(0, 5, 0)) },
+  { el: lblScStation,  pos: scBldPos('station').add(new THREE.Vector3(0, 3.5, 0)) },
+];
+// Initially hidden
+[lblScMuseum, lblScWelding, lblScLab, lblScStation].forEach(l => l.style.display = 'none');
+
+function updateSpaceCityLabels() {
+  SC_LABELS.forEach(({ el, pos }) => {
+    const v = pos.clone().project(camera);
+    const x = (v.x *  0.5 + 0.5) * window.innerWidth;
+    const y = (v.y * -0.5 + 0.5) * window.innerHeight;
+    el.style.left = x + 'px';
+    el.style.top  = (y - 10) + 'px';
+  });
+}
+
+// ---- Space City scene switching ----
+const scRaycaster = new THREE.Raycaster();
+
+function travelToSpaceCity() {
+  const overlay = document.getElementById('train-menu-overlay');
+  if (overlay) overlay.remove();
+
+  // If currently in mine, leave first
+  if (currentView === 'mine') switchFromMine();
+
+  // Hide farm UI
+  FARM_UI_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  document.getElementById('hopper-hud').style.display = 'none';
+
+  // Hide scene buttons (farm/town/mine unavailable)
+  document.getElementById('scene-btns').style.display = 'none';
+
+  // Hide all town labels
+  [lblSupply, lblRestaurant, lblBakery, lblChurch, lblAnimal, lblRobotics, lblSpelunker, lblBlacksmith, lblUniversity].forEach(l => l.style.display = 'none');
+  if (lblTrain) lblTrain.style.display = 'none';
+  hideTownMoleHammers();
+
+  currentView = 'spaceCity';
+  camera.position.copy(SC_CAM_POS);
+  camera.lookAt(SC_CAM_TARGET);
+
+  // Show Space City labels
+  [lblScMuseum, lblScWelding, lblScLab, lblScStation].forEach(l => l.style.display = 'block');
+
+  showTip('🚀 Welcome to Space City! Click a building to visit.', false);
+}
+
+function travelBackToTown() {
+  const overlay = document.getElementById('sc-station-overlay');
+  if (overlay) overlay.remove();
+
+  // Hide space city labels
+  [lblScMuseum, lblScWelding, lblScLab, lblScStation].forEach(l => l.style.display = 'none');
+
+  // Show scene buttons again
+  document.getElementById('scene-btns').style.display = '';
+
+  switchToTown();
+  showTip('🚄 You arrived back in town!', false);
+}
+
+// ---- Space City building click overlays ----
+function openScBuilding(key) {
+  const titles = {
+    sc_museum: '🚀 Space Museum',
+    sc_welding: '🔧 Custom Welding Factory',
+    sc_station: '🚄 Train Station',
+    sc_lab: '🧪 Materials Lab',
+  };
+  const descs = {
+    sc_museum: 'Explore the wonders of space exploration and see real rockets up close.',
+    sc_welding: 'Custom metalwork and welding services. Forge something unique!',
+    sc_lab: 'A cutting-edge research facility for analyzing and synthesizing rare materials.',
+  };
+
+  if (key === 'sc_station') {
+    openStationMenu();
+    return;
+  }
+
+  const existing = document.getElementById('sc-building-overlay');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'sc-building-overlay';
+  el.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:200;';
+  el.onclick = e => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div style="background:#1a1a2e;border:2px solid #4488FF;border-radius:14px;padding:24px 32px;color:#fff;font-family:monospace;text-align:center;min-width:300px;">
+      <div style="font-size:1.2rem;margin-bottom:8px">${titles[key] || key}</div>
+      <div style="color:#aaa;font-size:.85rem;margin-bottom:16px">${descs[key] || 'Coming soon…'}</div>
+      <button onclick="document.getElementById('sc-building-overlay').remove()" style="padding:6px 18px;border:1px solid #666;border-radius:6px;cursor:pointer;font-family:monospace;background:transparent;color:#aaa;">Close</button>
+    </div>`;
+  document.body.appendChild(el);
+}
+
+function openStationMenu() {
+  const existing = document.getElementById('sc-station-overlay');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'sc-station-overlay';
+  el.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:200;';
+  el.onclick = e => { if (e.target === el) el.remove(); };
+  el.innerHTML = `
+    <div style="background:#1a1a2e;border:2px solid #4488FF;border-radius:14px;padding:24px 32px;color:#fff;font-family:monospace;text-align:center;min-width:320px;">
+      <div style="font-size:1.2rem;margin-bottom:12px">🚄 Train Station — Destinations</div>
+      <button onclick="travelBackToTown()" style="display:block;width:100%;margin:8px 0;padding:10px 14px;border:none;border-radius:8px;cursor:pointer;font-family:monospace;font-size:.95rem;background:#446622;color:#fff;">🏘️ Back to Town</button>
+      <button onclick="document.getElementById('sc-station-overlay').remove()" style="display:block;width:100%;margin:10px 0 0;padding:6px 18px;border:1px solid #666;border-radius:6px;cursor:pointer;font-family:monospace;background:transparent;color:#aaa;">Cancel</button>
+    </div>`;
+  document.body.appendChild(el);
+}
+
+// ---- Space City click + hover handlers (added to existing canvas listeners) ----
+function handleSpaceCityClick(e) {
+  if (currentView !== 'spaceCity') return;
+  // Block if overlay open
+  if (document.getElementById('sc-building-overlay') || document.getElementById('sc-station-overlay')) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
+  const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
+  scRaycaster.setFromCamera({ x: mx, y: my }, camera);
+  const hits = scRaycaster.intersectObjects(spaceCityScene.children, true);
+  if (!hits.length) return;
+  const bld = hits[0].object.userData.building;
+  if (bld) openScBuilding(bld);
+}
+
+function handleSpaceCityHover(e) {
+  if (currentView !== 'spaceCity') return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
+  const my = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
+  scRaycaster.setFromCamera({ x: mx, y: my }, camera);
+  const allSc = [...scMeshes.museum, ...scMeshes.welding, ...scMeshes.station, ...scMeshes.lab];
+  const hits = scRaycaster.intersectObjects(allSc, false);
+  canvas.style.cursor = hits.length ? 'pointer' : 'default';
 }
 
 let _moleSpawnAccum = 0;
@@ -11554,9 +12507,13 @@ function updateBackpackUI() {
   container.innerHTML = html;
 }
 
+function backpackCountOfType(t) { return backpackItems.filter(i => i.type === t).length; }
+const BACKPACK_MAX_SAME = 4;
+
 function stowInBackpack(type) {
   if (!hasBackpack) { showTip('⚠️ You don\'t have a backpack!'); return false; }
   if (backpackItems.length >= backpackSlots) { showTip('🎒 Backpack is full!'); return false; }
+  if (backpackCountOfType(type) >= BACKPACK_MAX_SAME) { showTip(`🎒 You can only carry ${BACKPACK_MAX_SAME} of the same item!`); return false; }
   const info = getConsumableInfo(type);
   if (!info) return false;
   backpackItems.push({ type, emoji: info.emoji, name: info.name });
@@ -11587,7 +12544,11 @@ function useBackpackItem(idx) {
     closeBackpack();
     mineLevel += floors;
     if (repellentLevelsLeft > 0) repellentLevelsLeft = Math.max(0, repellentLevelsLeft - floors);
-    generateMineLevel(mineLevel);
+    if (!catRescued && mineLevel >= CAT_LEVEL_MIN && Math.random() < CAT_LEVEL_CHANCE) {
+      generateCatLevel(mineLevel);
+    } else {
+      generateMineLevel(mineLevel);
+    }
     showTip(`🌀 Warp Drill activated! Descended ${floors} levels to level ${mineLevel}!`);
     return;
   }
@@ -12951,6 +13912,7 @@ function switchToFarm() {
   wildBees.forEach(b => { b.mesh.visible = true; });
   if (beehive) beehive.mesh.visible = true;
   if (rainbowMesh) rainbowMesh.visible = true;
+  if (petCat) { petCat.mesh.visible = true; }
   for (let x=0;x<GRID;x++) for (let z=0;z<GRID;z++) { const fm = tileGrid[x][z].userData.fertileMesh; if (fm) fm.visible = true; }
   if (incubatorMesh) incubatorMesh.visible = true;
   if (chickenCoopMesh) chickenCoopMesh.visible = true;
@@ -12985,6 +13947,7 @@ function switchToFarm() {
 }
 
 function handleSceneBtn(target) {
+  if (currentView === 'spaceCity') { showTip('🚄 Use the train station in Space City to travel back!'); return; }
   if (target === 'farm') {
     if (currentView === 'farm') { showTip('🌾 You are already on the farm!'); return; }
     if (currentView === 'mine' && mineLevel > 1) { showTip('⛏️ You must return to Level 1 before leaving the mine!'); return; }
@@ -13910,6 +14873,7 @@ function buyRepellent() {
   if (!hasBackpack) { showTip('⚠️ You need a backpack to carry repellent!'); return; }
   if (gold < REPELLENT_PRICE) { showTip('⚠️ Not enough gold!'); return; }
   if (backpackItems.length >= backpackSlots) { showTip('🎒 Backpack is full!'); return; }
+  if (backpackCountOfType('repellent') >= BACKPACK_MAX_SAME) { showTip(`🎒 You can only carry ${BACKPACK_MAX_SAME} of the same item!`); return; }
   gold -= REPELLENT_PRICE;
   updateGoldUI();
   backpackItems.push({ type: 'repellent', emoji: '🧴', name: 'Centipede Repellent' });
@@ -13922,6 +14886,7 @@ function buyBomb() {
   if (!hasBackpack) { showTip('⚠️ You need a backpack to carry bombs!'); return; }
   if (gold < BOMB_PRICE) { showTip('⚠️ Not enough gold!'); return; }
   if (backpackItems.length >= backpackSlots) { showTip('🎒 Backpack is full!'); return; }
+  if (backpackCountOfType('bomb') >= BACKPACK_MAX_SAME) { showTip(`🎒 You can only carry ${BACKPACK_MAX_SAME} of the same item!`); return; }
   gold -= BOMB_PRICE;
   updateGoldUI();
   backpackItems.push({ type: 'bomb', emoji: '💣', name: 'Bomb' });
@@ -13934,6 +14899,7 @@ function buyWarpDrill() {
   if (!hasBackpack) { showTip('⚠️ You need a backpack to carry drills!'); return; }
   if (gold < WARP_DRILL_PRICE) { showTip('⚠️ Not enough gold!'); return; }
   if (backpackItems.length >= backpackSlots) { showTip('🎒 Backpack is full!'); return; }
+  if (backpackCountOfType('warpDrill') >= BACKPACK_MAX_SAME) { showTip(`🎒 You can only carry ${BACKPACK_MAX_SAME} of the same item!`); return; }
   gold -= WARP_DRILL_PRICE;
   updateGoldUI();
   backpackItems.push({ type: 'warpDrill', emoji: '🌀', name: 'Warp Drill' });
@@ -14225,6 +15191,23 @@ canvas.addEventListener('click', e => {
     }
   }
 
+  // Check cat click on cat levels
+  if (isCatLevel && mineCatMesh && mineCatClickCount < 4) {
+    const r = canvas.getBoundingClientRect();
+    mineRaycaster.setFromCamera(
+      new THREE.Vector2(
+        ((e.clientX - r.left) / r.width)  *  2 - 1,
+        ((e.clientY - r.top)  / r.height) * -2 + 1
+      ), camera
+    );
+    const catKids = [];
+    mineCatMesh.traverse(c => { if (c.isMesh) catKids.push(c); });
+    if (mineRaycaster.intersectObjects(catKids).length > 0) {
+      clickMineCat();
+      return;
+    }
+  }
+
   // Check mole clicks first
   if (mineMoles.length > 0) {
     const r = canvas.getBoundingClientRect();
@@ -14340,6 +15323,18 @@ canvas.addEventListener('click', e => {
   if (bld === 'bakery')      openBakery();
   if (bld === 'spelunker')   openSpelunkerBunker();
   if (bld === 'trainMoles')  clickTrainMoles();
+});
+
+// Space City click handler
+canvas.addEventListener('click', e => {
+  if (currentView !== 'spaceCity') return;
+  handleSpaceCityClick(e);
+});
+
+// Space City hover handler
+canvas.addEventListener('mousemove', e => {
+  if (currentView !== 'spaceCity') return;
+  handleSpaceCityHover(e);
 });
 
 // Town label hover feedback
@@ -14461,6 +15456,179 @@ canvas.addEventListener('mousemove', e => {
     });
   });
 })();
+
+// ================================================================
+//  DEVELOPER PANEL
+// ================================================================
+// Toggle visibility: set DEV_MODE = true to show the DEV button
+const DEV_MODE = true;
+if (DEV_MODE) document.getElementById('dev-btn').style.display = 'block';
+
+function toggleDevPanel() {
+  const overlay = document.getElementById('dev-overlay');
+  if (overlay.style.display === 'flex') {
+    overlay.style.display = 'none';
+    return;
+  }
+  overlay.style.display = 'flex';
+  refreshDevPanel();
+}
+
+function refreshDevPanel() {
+  // ---- Town buildings ----
+  const milestones = [
+    { id: 'bakery',      label: '🥐 Bakery',           get: () => bakeryUnlocked,      set: v => { if (v && !bakeryUnlocked) { bakeryUnlocked = true; if (bakeryConstrGrp) bakeryConstrGrp.visible = false; if (bakeryBuiltGrp) bakeryBuiltGrp.visible = true; lblBakery.textContent = '🥐 Bakery'; } } },
+    { id: 'robotics',    label: '🤖 Robotics Shop',    get: () => roboticsUnlocked,    set: v => { if (v && !roboticsUnlocked) { roboticsUnlocked = true; if (roboticsConstrGrp) roboticsConstrGrp.visible = false; if (roboticsBuiltGrp) roboticsBuiltGrp.visible = true; lblRobotics.textContent = '🤖 Robotics Shop'; } } },
+    { id: 'blacksmith',  label: '🔨 Blacksmith',       get: () => blacksmithUnlocked,  set: v => { if (v && !blacksmithUnlocked) { blacksmithUnlocked = true; if (blacksmithConstrGrp) blacksmithConstrGrp.visible = false; if (blacksmithBuiltGrp) blacksmithBuiltGrp.visible = true; lblBlacksmith.textContent = '🔨 Blacksmith'; } } },
+    { id: 'university',  label: '🏛️ University',       get: () => universityUnlocked,  set: v => { if (v && !universityUnlocked) { universityUnlocked = true; if (universityConstrGrp) universityConstrGrp.visible = false; if (universityBuiltGrp) universityBuiltGrp.visible = true; lblUniversity.textContent = '🏛️ University'; } } },
+    { id: 'spelunker',   label: '⛏️ Spelunker Bunker', get: () => spelunkerUnlocked,   set: v => { if (v && !spelunkerUnlocked) { spelunkerUnlocked = true; if (spelunkerConstrGrp) spelunkerConstrGrp.visible = false; if (spelunkerBuiltGrp) spelunkerBuiltGrp.visible = true; lblSpelunker.textContent = '⛏️ Spelunker Bunker'; } } },
+  ];
+  let mhtml = '';
+  milestones.forEach(m => {
+    const checked = m.get() ? 'checked' : '';
+    mhtml += `<label style="display:block;margin:4px 0;cursor:pointer;"><input type="checkbox" ${checked} onchange="devToggleMilestone('${m.id}', this.checked)"> ${m.label}</label>`;
+  });
+  document.getElementById('dev-milestones').innerHTML = mhtml;
+
+  // ---- Farm unlocks ----
+  const farmUnlocks = [
+    { id: 'backpack',    label: '🎒 Backpack',         get: () => hasBackpack,     set: v => { if (v && !hasBackpack) { hasBackpack = true; showBackpackBtn(); } } },
+    { id: 'cowBarn',     label: '🐄 Cow Barn',         get: () => hasCowBarn,      set: v => { if (v && !hasCowBarn) buyCowBarn(); } },
+    { id: 'pigSty',      label: '🐷 Pig Sty',          get: () => hasPigSty,       set: v => { if (v && !hasPigSty) buyPigSty(); } },
+    { id: 'incubator',  label: '🥚 Incubator',        get: () => !!incubatorMesh, set: v => { if (v && !incubatorMesh) { hasIncubator = true; placeIncubator(); } } },
+    { id: 'catRescued',  label: '🐱 Pet Cat (rescued)', get: () => catRescued,      set: v => { if (v && !catRescued) { catRescued = true; spawnPetCat(); } } },
+  ];
+  let fhtml = '';
+  farmUnlocks.forEach(m => {
+    const checked = m.get() ? 'checked' : '';
+    fhtml += `<label style="display:block;margin:4px 0;cursor:pointer;"><input type="checkbox" ${checked} onchange="devToggleFarm('${m.id}', this.checked)"> ${m.label}</label>`;
+  });
+  document.getElementById('dev-farm-unlocks').innerHTML = fhtml;
+
+  // ---- Tool Upgrades ----
+  let thtml = '';
+  UPGRADEABLE_TOOLS.forEach(t => {
+    const lvl = toolLevels[t];
+    const emoji = TOOL_EMOJI[t] || '';
+    const label = TOOL_LABEL[t] || t;
+    const upgrading = toolUpgrading[t];
+    let status = upgrading ? ' <span style="color:#fa0;font-size:11px;">(upgrading...)</span>' : '';
+    thtml += `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+      <span style="min-width:120px;">${emoji} ${label}${status}</span>
+      <span style="color:#888;font-size:11px;">Lv ${lvl}</span>
+      <button onclick="devSetToolLevel('${t}', Math.max(0, toolLevels['${t}']-1))" style="padding:1px 8px;border:1px solid #555;border-radius:4px;background:#333;color:#ccc;cursor:pointer;font-family:monospace;font-size:11px;" ${lvl <= 0 ? 'disabled' : ''}>-</button>
+      <button onclick="devSetToolLevel('${t}', Math.min(3, toolLevels['${t}']+1))" style="padding:1px 8px;border:1px solid #555;border-radius:4px;background:#333;color:#ccc;cursor:pointer;font-family:monospace;font-size:11px;" ${lvl >= 3 ? 'disabled' : ''}>+</button>
+      <button onclick="devSetToolLevel('${t}', 3)" style="padding:1px 8px;border:1px solid #555;border-radius:4px;background:#333;color:#8f8;cursor:pointer;font-family:monospace;font-size:11px;" ${lvl >= 3 ? 'disabled' : ''}>MAX</button>
+    </div>`;
+  });
+  thtml += `<button onclick="devMaxAllTools()" style="margin-top:6px;padding:4px 14px;border:1px solid #4a4;border-radius:6px;background:rgba(40,120,40,0.3);color:#8f8;cursor:pointer;font-family:monospace;font-size:12px;">Max All Tools</button>`;
+  document.getElementById('dev-tools').innerHTML = thtml;
+
+  // ---- Misc ----
+  let miscHtml = '';
+  miscHtml += `<label style="display:block;margin:4px 0;cursor:pointer;"><input type="checkbox" ${trainDonations >= TRAIN_DONATIONS_MAX ? 'checked' : ''} onchange="devToggleMisc('trainComplete', this.checked)"> 🚄 Bullet Train Complete</label>`;
+  miscHtml += `<div style="margin:6px 0;"><span>⛏️ Mine Level: </span><input type="number" id="dev-mine-level" value="${mineLevel}" min="1" max="${MINE_MAX_LEVEL}" style="width:60px;background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:2px 6px;font-family:monospace;"> <button onclick="devSetMineLevel()" style="padding:2px 10px;border:1px solid #555;border-radius:4px;background:#333;color:#ccc;cursor:pointer;font-family:monospace;">Set</button></div>`;
+  miscHtml += `<div style="margin:6px 0;"><span>📅 Day: </span><input type="number" id="dev-day" value="${dayCount}" min="1" style="width:60px;background:#222;color:#fff;border:1px solid #555;border-radius:4px;padding:2px 6px;font-family:monospace;"> <button onclick="devSetDay()" style="padding:2px 10px;border:1px solid #555;border-radius:4px;background:#333;color:#ccc;cursor:pointer;font-family:monospace;">Set</button></div>`;
+  document.getElementById('dev-misc').innerHTML = miscHtml;
+}
+
+const _devMilestones = {};
+const _devFarmUnlocks = {};
+
+function devToggleMilestone(id, checked) {
+  const milestones = {
+    bakery:     { set: () => { bakeryUnlocked = true; if (bakeryConstrGrp) bakeryConstrGrp.visible = false; if (bakeryBuiltGrp) bakeryBuiltGrp.visible = true; lblBakery.textContent = '🥐 Bakery'; } },
+    robotics:   { set: () => { roboticsUnlocked = true; if (roboticsConstrGrp) roboticsConstrGrp.visible = false; if (roboticsBuiltGrp) roboticsBuiltGrp.visible = true; lblRobotics.textContent = '🤖 Robotics Shop'; } },
+    blacksmith: { set: () => { blacksmithUnlocked = true; if (blacksmithConstrGrp) blacksmithConstrGrp.visible = false; if (blacksmithBuiltGrp) blacksmithBuiltGrp.visible = true; lblBlacksmith.textContent = '🔨 Blacksmith'; } },
+    university: { set: () => { universityUnlocked = true; if (universityConstrGrp) universityConstrGrp.visible = false; if (universityBuiltGrp) universityBuiltGrp.visible = true; lblUniversity.textContent = '🏛️ University'; } },
+    spelunker:  { set: () => { spelunkerUnlocked = true; if (spelunkerConstrGrp) spelunkerConstrGrp.visible = false; if (spelunkerBuiltGrp) spelunkerBuiltGrp.visible = true; lblSpelunker.textContent = '⛏️ Spelunker Bunker'; } },
+  };
+  if (checked && milestones[id]) milestones[id].set();
+}
+
+function devToggleFarm(id, checked) {
+  if (!checked) return; // unlocks are one-way
+  const actions = {
+    backpack:   () => { hasBackpack = true; showBackpackBtn(); },
+    cowBarn:    () => { if (!hasCowBarn) { hasCowBarn = true; placeCowBarn(); } },
+    pigSty:     () => { if (!hasPigSty) { hasPigSty = true; placePigSty(); } },
+    incubator: () => { if (!incubatorMesh) { hasIncubator = true; placeIncubator(); } },
+    catRescued: () => { if (!catRescued) { catRescued = true; spawnPetCat(); } },
+  };
+  if (actions[id]) actions[id]();
+}
+
+function devToggleMisc(id, checked) {
+  if (id === 'trainComplete' && checked) {
+    // Ensure town moles exist (need at least 1 for the train area to build)
+    if (townMoles.length === 0) {
+      for (let i = 0; i < TOWN_MOLE_MAX; i++) addTownMole();
+    }
+    // Ensure train area is built
+    if (!trainGroup) buildTrainArea();
+    // Set donations to max
+    trainDonations = TRAIN_DONATIONS_MAX;
+    updateTrainConstruction();
+    updateTownMoleHammers();
+    updateTrainLabel();
+    showTip('🚄 Bullet train completed via dev panel!');
+  }
+}
+
+function devSetToolLevel(tool, level) {
+  toolLevels[tool] = level;
+  toolUpgrading[tool] = null; // cancel any in-progress upgrade
+  updateToolChevrons();
+  refreshDevPanel();
+  showTip(`${TOOL_EMOJI[tool]} ${TOOL_LABEL[tool]} set to Level ${level}`);
+}
+
+function devMaxAllTools() {
+  UPGRADEABLE_TOOLS.forEach(t => {
+    toolLevels[t] = 3;
+    toolUpgrading[t] = null;
+  });
+  updateToolChevrons();
+  refreshDevPanel();
+  showTip('All tools maxed to Level 3!');
+}
+
+function devAddResources() {
+  gold += 1000;
+  updateGoldUI();
+  // Add 50 of each material
+  Object.keys(materials).forEach(k => { materials[k] += 50; });
+  updateMaterialsUI();
+  // Add 50 seeds and 50 harvested of each crop
+  CROP_KEYS.forEach(k => {
+    inventory[k].seeds += 50;
+    inventory[k].harvested += 50;
+  });
+  buildInventoryUI();
+  showTip('💰 Dev: +1000g, +50 all materials & seeds');
+  refreshDevPanel();
+}
+
+function devSetMineLevel() {
+  const val = parseInt(document.getElementById('dev-mine-level').value);
+  if (isNaN(val) || val < 1 || val > MINE_MAX_LEVEL) return;
+  mineLevel = val;
+  if (val > deepestMineLevel) deepestMineLevel = val;
+  if (currentView === 'mine') {
+    generateMineLevel(mineLevel);
+    const levelEl = document.getElementById('mine-level-num');
+    if (levelEl) levelEl.textContent = mineLevel;
+  }
+  showTip(`⛏️ Dev: Mine level set to ${mineLevel}`);
+}
+
+function devSetDay() {
+  const val = parseInt(document.getElementById('dev-day').value);
+  if (isNaN(val) || val < 1) return;
+  dayCount = val;
+  document.getElementById('day').textContent = dayCount;
+  showTip(`📅 Dev: Day set to ${dayCount}`);
+}
 
 </script>
 </body>
