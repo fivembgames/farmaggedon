@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Teleprompter</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #000;
+    color: #fff;
+    font-family: Georgia, "Times New Roman", serif;
+    overflow: hidden;
+  }
+  #controls {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: rgba(20, 20, 20, 0.95);
+    padding: 12px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    z-index: 10;
+    border-bottom: 1px solid #333;
+  }
+  #controls button {
+    background: #2a2a2a;
+    color: #fff;
+    border: 1px solid #555;
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  #controls button:hover { background: #3a3a3a; }
+  #controls button.active { background: #c0392b; border-color: #e74c3c; }
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+  }
+  input[type="range"] { width: 160px; }
+  #editorPane {
+    position: fixed;
+    left: 5vw;
+    right: 5vw;
+    bottom: 5vh;
+    max-height: 70vh;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    z-index: 20;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #editorPane.open { display: flex; }
+  #editorHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: #2a2a2a;
+    border-bottom: 1px solid #444;
+    font-size: 14px;
+    color: #ddd;
+  }
+  #editorHeader button {
+    background: #c0392b;
+    color: #fff;
+    border: none;
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin-left: 8px;
+  }
+  #editorHeader button.secondary {
+    background: #555;
+  }
+  #editor {
+    flex: 1;
+    width: 100%;
+    min-height: 240px;
+    background: #111;
+    color: #ddd;
+    border: none;
+    padding: 16px;
+    font-family: inherit;
+    font-size: 16px;
+    line-height: 1.5;
+    resize: none;
+    outline: none;
+  }
+  #prompter {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding-top: 50vh;
+    padding-bottom: 50vh;
+    padding-left: 8vw;
+    padding-right: 8vw;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    cursor: grab;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #prompter::-webkit-scrollbar { display: none; }
+  #prompter.dragging { cursor: grabbing; }
+  #prompter.playing {
+    overflow: hidden;
+    touch-action: none;
+  }
+  #script {
+    font-size: 56px;
+    line-height: 1.5;
+    text-align: center;
+    white-space: pre-wrap;
+  }
+  .mirror-h #script { transform: scaleX(-1); }
+  .mirror-v #script { transform: scaleY(-1); }
+  .mirror-h.mirror-v #script { transform: scale(-1, -1); }
+  #marker {
+    position: fixed;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: rgba(231, 76, 60, 0.4);
+    pointer-events: none;
+    z-index: 5;
+  }
+  #countdown {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 30;
+    pointer-events: none;
+  }
+  #countdown.active { display: flex; }
+  #countdownNum {
+    font-size: 40vh;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 0 60px rgba(231, 76, 60, 0.8);
+    opacity: 0;
+    transform: scale(0.6);
+    animation: countdownPulse 1s ease-out forwards;
+  }
+  @keyframes countdownPulse {
+    0%   { opacity: 0; transform: scale(0.4); }
+    20%  { opacity: 1; transform: scale(1.0); }
+    100% { opacity: 0; transform: scale(1.6); }
+  }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <button id="playBtn">Play</button>
+  <button id="resetBtn">Reset</button>
+  <div class="control-group">
+    <label for="speed">Speed</label>
+    <input type="range" id="speed" min="10" max="300" value="80">
+    <span id="speedVal">80</span> px/s
+  </div>
+  <div class="control-group">
+    <label for="fontSize">Size</label>
+    <input type="range" id="fontSize" min="24" max="120" value="56">
+  </div>
+  <div class="control-group">
+    <label for="countdownTime">Countdown</label>
+    <input type="range" id="countdownTime" min="1" max="30" value="3">
+    <span id="countdownVal">3</span>s
+  </div>
+  <button id="mirrorH">Mirror H</button>
+  <button id="mirrorV">Mirror V</button>
+  <button id="editBtn">Edit Text</button>
+  <button id="loadBtn">Load File</button>
+  <input type="file" id="fileInput" accept=".txt,.docx,text/plain" style="display:none">
+  <span id="fileName" style="font-size: 13px; color: #888;"></span>
+</div>
+
+<div id="editorPane">
+  <div id="editorHeader">
+    <span>Edit Script</span>
+    <div>
+      <button id="editorCancel" class="secondary">Cancel</button>
+      <button id="editorSave">Save</button>
+    </div>
+  </div>
+  <textarea id="editor" placeholder="Paste your script here..."></textarea>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+
+<div id="prompter">
+  <div id="script"></div>
+</div>
+<div id="marker"></div>
+<div id="countdown"><div id="countdownNum"></div></div>
+
+<script>
+  const sampleText = `Welcome to the Teleprompter.
+
+This is a simple, single-file teleprompter you can use right in your browser. Press Play to start scrolling, and use the speed slider to find a comfortable reading pace.
+
+The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump!
+
+Public speaking is the art of diluting a two-minute idea with a two-hour vocabulary. But with a teleprompter, even the longest speech can feel effortless and natural.
+
+Remember to breathe. Pause at punctuation. Make eye contact with your audience between lines. The script is a guide, not a cage.
+
+Use the size slider to make the text comfortable to read from a distance. Use the mirror buttons if you are reflecting this off of glass for a true broadcast-style teleprompter rig.
+
+When you reach the end, hit Reset to start over. Press the spacebar to play or pause at any time. The arrow keys nudge the script up and down for fine adjustments.
+
+You are doing great. Keep going. The camera loves you.
+
+— End of sample script —`;
+
+  const script = document.getElementById('script');
+  const editor = document.getElementById('editor');
+  const prompter = document.getElementById('prompter');
+  const playBtn = document.getElementById('playBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const speed = document.getElementById('speed');
+  const speedVal = document.getElementById('speedVal');
+  const fontSize = document.getElementById('fontSize');
+  const mirrorH = document.getElementById('mirrorH');
+  const mirrorV = document.getElementById('mirrorV');
+  const editBtn = document.getElementById('editBtn');
+  const editorPane = document.getElementById('editorPane');
+  const editorSave = document.getElementById('editorSave');
+  const editorCancel = document.getElementById('editorCancel');
+  const loadBtn = document.getElementById('loadBtn');
+  const fileInput = document.getElementById('fileInput');
+  const fileName = document.getElementById('fileName');
+  const countdownTime = document.getElementById('countdownTime');
+  const countdownVal = document.getElementById('countdownVal');
+  const countdownEl = document.getElementById('countdown');
+  const countdownNum = document.getElementById('countdownNum');
+
+  script.textContent = sampleText;
+  editor.value = sampleText;
+
+  let playing = false;
+  let position = 0;
+  let lastTime = null;
+
+  function tick(now) {
+    if (!playing) return;
+    if (dragging) {
+      lastTime = null;
+      requestAnimationFrame(tick);
+      return;
+    }
+    if (lastTime === null) lastTime = now;
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+    position += parseFloat(speed.value) * dt;
+    prompter.scrollTop = position;
+    if (prompter.scrollTop < position - 1) {
+      stop();
+    } else {
+      requestAnimationFrame(tick);
+    }
+  }
+
+  let countdownTimer = null;
+  let countingDown = false;
+
+  function startScroll() {
+    position = prompter.scrollTop;
+    playing = true;
+    lastTime = null;
+    playBtn.textContent = 'Pause';
+    playBtn.classList.add('active');
+    prompter.classList.add('playing');
+    requestAnimationFrame(tick);
+  }
+
+  function showCountdownStep(n) {
+    countdownNum.style.animation = 'none';
+    countdownNum.offsetHeight;
+    countdownNum.textContent = n > 0 ? n : 'GO';
+    countdownNum.style.animation = 'countdownPulse 1s ease-out forwards';
+  }
+
+  function play() {
+    const total = parseInt(countdownTime.value, 10);
+    if (total <= 0) { startScroll(); return; }
+    countingDown = true;
+    countdownEl.classList.add('active');
+    playBtn.textContent = 'Cancel';
+    playBtn.classList.add('active');
+    let remaining = total;
+    showCountdownStep(remaining);
+    countdownTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining > 0) {
+        showCountdownStep(remaining);
+      } else {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+        countdownEl.classList.remove('active');
+        countingDown = false;
+        startScroll();
+      }
+    }, 1000);
+  }
+
+  function cancelCountdown() {
+    if (countdownTimer) clearInterval(countdownTimer);
+    countdownTimer = null;
+    countingDown = false;
+    countdownEl.classList.remove('active');
+  }
+
+  function stop() {
+    if (countingDown) {
+      cancelCountdown();
+      playBtn.textContent = 'Play';
+      playBtn.classList.remove('active');
+      return;
+    }
+    playing = false;
+    playBtn.textContent = 'Play';
+    playBtn.classList.remove('active');
+    prompter.classList.remove('playing');
+    position = prompter.scrollTop;
+  }
+
+  function reset() {
+    stop();
+    position = 0;
+    prompter.scrollTop = 0;
+  }
+
+  playBtn.addEventListener('click', () => (playing || countingDown) ? stop() : play());
+  resetBtn.addEventListener('click', reset);
+
+  speed.addEventListener('input', () => speedVal.textContent = speed.value);
+  fontSize.addEventListener('input', () => script.style.fontSize = fontSize.value + 'px');
+  countdownTime.addEventListener('input', () => countdownVal.textContent = countdownTime.value);
+
+  mirrorH.addEventListener('click', () => {
+    document.body.classList.toggle('mirror-h');
+    mirrorH.classList.toggle('active');
+  });
+  mirrorV.addEventListener('click', () => {
+    document.body.classList.toggle('mirror-v');
+    mirrorV.classList.toggle('active');
+  });
+
+  function setScript(text) {
+    script.textContent = text;
+    editor.value = text;
+    reset();
+  }
+
+  loadBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    fileName.textContent = file.name;
+    const ext = file.name.split('.').pop().toLowerCase();
+    try {
+      if (ext === 'docx') {
+        const buf = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer: buf });
+        setScript(result.value);
+      } else {
+        const text = await file.text();
+        setScript(text);
+      }
+    } catch (err) {
+      alert('Failed to load file: ' + err.message);
+      fileName.textContent = '';
+    }
+    fileInput.value = '';
+  });
+
+  function openEditor() {
+    stop();
+    editor.value = script.textContent;
+    editorPane.classList.add('open');
+    editor.focus();
+  }
+  function closeEditor(save) {
+    if (save) setScript(editor.value);
+    editorPane.classList.remove('open');
+  }
+
+  editBtn.addEventListener('click', openEditor);
+  editorSave.addEventListener('click', () => closeEditor(true));
+  editorCancel.addEventListener('click', () => closeEditor(false));
+
+  prompter.addEventListener('scroll', () => {
+    if (!playing) position = prompter.scrollTop;
+  });
+
+  let dragStartY = 0;
+  let dragStartScroll = 0;
+  let dragging = false;
+
+  function dragBegin(y) {
+    dragging = true;
+    dragStartY = y;
+    dragStartScroll = prompter.scrollTop;
+    prompter.classList.add('dragging');
+  }
+  function dragMove(y) {
+    if (!dragging) return;
+    const newTop = dragStartScroll - (y - dragStartY);
+    prompter.scrollTop = newTop;
+    if (playing) {
+      position = prompter.scrollTop;
+      lastTime = null;
+    }
+  }
+  function dragEnd() {
+    if (!dragging) return;
+    dragging = false;
+    prompter.classList.remove('dragging');
+    if (playing) {
+      position = prompter.scrollTop;
+      lastTime = null;
+    }
+  }
+
+  prompter.addEventListener('mousedown', (e) => {
+    dragBegin(e.clientY);
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => dragMove(e.clientY));
+  window.addEventListener('mouseup', dragEnd);
+
+  prompter.addEventListener('touchstart', (e) => {
+    if (!playing || e.touches.length !== 1) return;
+    dragBegin(e.touches[0].clientY);
+  }, { passive: true });
+  prompter.addEventListener('touchmove', (e) => {
+    if (!dragging || e.touches.length !== 1) return;
+    e.preventDefault();
+    dragMove(e.touches[0].clientY);
+  }, { passive: false });
+  prompter.addEventListener('touchend', dragEnd);
+  prompter.addEventListener('touchcancel', dragEnd);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target === editor) {
+      if (e.code === 'Escape') closeEditor(false);
+      return;
+    }
+    if (e.code === 'Space') {
+      e.preventDefault();
+      (playing || countingDown) ? stop() : play();
+    } else if (e.code === 'ArrowUp') {
+      position = Math.max(0, position - 40);
+      prompter.scrollTop = position;
+    } else if (e.code === 'ArrowDown') {
+      position += 40;
+      prompter.scrollTop = position;
+    } else if (e.code === 'Home') {
+      reset();
+    }
+  });
+</script>
+</body>
+</html>
