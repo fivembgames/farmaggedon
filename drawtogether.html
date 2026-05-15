@@ -1,0 +1,1742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Draw Together</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100vh; overflow: hidden;
+    background: #1a1a22; color: #e8e8f0;
+    font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 13px;
+    user-select: none;
+  } 
+  .app { display: flex; height: 100vh; }
+  .sidebar {
+    width: 220px; flex-shrink: 0; padding: 12px;
+    background: #22222e; border-right: 1px solid #333;
+    overflow-y: auto;
+  }
+  .sidebar.right { border-right: none; border-left: 1px solid #333; width: 260px; }
+  .center {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    background: #15151c; overflow: auto; position: relative;
+  }
+  h3 { margin: 12px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: #88a; }
+  h3:first-child { margin-top: 0; }
+
+  .row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  .tool, .shape, .stamp, .swatch, .filter-btn, .adjust-btn {
+    background: #2a2a38; border: 1px solid #333;
+    border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: #e8e8f0;
+    transition: background .12s, border-color .12s;
+  }
+  .tool, .shape, .stamp { width: 36px; height: 36px; font-size: 18px; }
+  .tool:hover, .shape:hover, .stamp:hover, .swatch:hover, .filter-btn:hover, .adjust-btn:hover {
+    background: #34344a; border-color: #557;
+  }
+  .tool.active, .shape.active, .stamp.active {
+    background: #3a4a7a; border-color: #7fffaa; color: #7fffaa;
+  }
+  .swatch { width: 22px; height: 22px; border-radius: 4px; padding: 0; }
+  .filter-btn, .adjust-btn { padding: 6px; font-size: 11px; text-align: center; }
+
+  label { font-size: 12px; color: #aab; display: block; margin: 8px 0 3px; }
+  input[type="range"] { width: 100%; }
+  input[type="color"] {
+    width: 100%; height: 32px; border: 1px solid #333;
+    background: #2a2a38; border-radius: 4px; cursor: pointer;
+  }
+  input[type="text"], input[type="number"], select {
+    background: #15151c; border: 1px solid #333; color: #e8e8f0;
+    padding: 4px 6px; border-radius: 4px; font-family: inherit; font-size: 12px; width: 100%;
+  }
+
+  button {
+    background: #2a2a38; border: 1px solid #333; color: #e8e8f0;
+    padding: 6px 10px; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 12px;
+    transition: background .12s;
+  }
+  button:hover { background: #3a3a4a; }
+  button.primary { background: #3a4a7a; border-color: #5a6aaa; }
+  button.primary:hover { background: #4a5a8a; }
+  button.danger:hover { background: #6a2a2a; }
+  .btn-row { display: flex; gap: 4px; margin-bottom: 6px; }
+  .btn-row button { flex: 1; }
+
+  .canvas-stack, .pattern-stack { position: relative; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+  .canvas-stack canvas, .pattern-stack canvas {
+    position: absolute; top: 0; left: 0;
+  }
+  .canvas-stack canvas.bg, .pattern-stack canvas.bg { position: relative; background: #fff; }
+
+  .layer-item {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 6px; margin-bottom: 4px;
+    background: #2a2a38; border: 1px solid #333; border-radius: 4px;
+    cursor: pointer;
+  }
+  .layer-item.active { border-color: #7fffaa; background: #3a4a5a; }
+  .layer-row { display: flex; align-items: center; gap: 6px; }
+  .layer-item .vis { width: 20px; text-align: center; cursor: pointer; }
+  .layer-item .name { flex: 1; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .layer-item .tag {
+    font-size: 9px; background: #555; padding: 1px 4px; border-radius: 3px;
+    text-transform: uppercase; letter-spacing: .05em;
+  }
+  .layer-item .tag.adj { background: #4a6aaa; }
+  .layer-item .del { color: #c66; cursor: pointer; padding: 0 4px; }
+  .layer-item .del:hover { color: #f88; }
+  .layer-item .adj-control { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #aab; }
+  .layer-item .adj-control input { flex: 1; }
+
+  .swatches-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .stamps-grid, .shapes-grid, .tools-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .filters-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+  .adjust-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+
+  .img-search-row { display: flex; gap: 4px; margin-bottom: 6px; }
+  .img-search-row input { flex: 1; }
+  .img-search-row button { flex: 0 0 auto; }
+  .results-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+    max-height: 240px; overflow-y: auto;
+    background: #15151c; padding: 4px; border: 1px solid #333; border-radius: 4px;
+    margin-bottom: 6px;
+  }
+  .img-result {
+    width: 100%; aspect-ratio: 1 / 1; background: #2a2a38;
+    border-radius: 4px; overflow: hidden; cursor: pointer;
+    border: 1px solid transparent;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .img-result:hover { border-color: #7fffaa; }
+  .img-result img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .img-result.loading { color: #88a; font-size: 18px; }
+  .img-empty { grid-column: 1 / -1; text-align: center; color: #667; font-size: 11px; padding: 18px 4px; }
+  .attribution {
+    font-size: 10px; color: #667; margin-bottom: 6px; line-height: 1.4;
+    word-break: break-word;
+  }
+
+  .size-preview {
+    width: 100%; height: 30px; background: #15151c; border: 1px solid #333;
+    border-radius: 4px; display: flex; align-items: center; justify-content: center;
+    margin-bottom: 6px;
+  }
+  .size-preview div { background: currentColor; border-radius: 50%; }
+
+  .pattern-wrap {
+    background: #15151c; border: 1px solid #333; border-radius: 4px;
+    padding: 8px; display: flex; flex-direction: column; align-items: center;
+    margin-bottom: 6px;
+  }
+  .pattern-stack canvas {
+    image-rendering: pixelated;
+  }
+  .pattern-stack canvas.bg {
+    background:
+      linear-gradient(45deg, #ddd 25%, transparent 25%, transparent 75%, #ddd 75%),
+      linear-gradient(45deg, #ddd 25%, #fff 25%, #fff 75%, #ddd 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 6px 6px;
+    border: 1px solid #444;
+  }
+
+  .status { color: #88a; font-size: 11px; margin-top: 8px; min-height: 14px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- LEFT SIDEBAR -->
+  <div class="sidebar">
+    <h3>Tools</h3>
+    <div class="tools-grid">
+      <div class="tool active" data-tool="pen" title="Pen (B)">✒️</div>
+      <div class="tool" data-tool="marker" title="Marker">🖍️</div>
+      <div class="tool" data-tool="pencil" title="Pencil">✏️</div>
+      <div class="tool" data-tool="spray" title="Spray">🎨</div>
+      <div class="tool" data-tool="calligraphy" title="Calligraphy">🖋️</div>
+      <div class="tool" data-tool="eraser" title="Eraser (E)">🧹</div>
+      <div class="tool" data-tool="fill" title="Fill bucket (G)">🪣</div>
+      <div class="tool" data-tool="eyedrop" title="Eyedrop (I)">💧</div>
+    </div>
+
+    <h3>Shapes</h3>
+    <div class="shapes-grid">
+      <div class="shape" data-tool="line" title="Line">╱</div>
+      <div class="shape" data-tool="rect" title="Rectangle">▭</div>
+      <div class="shape" data-tool="ellipse" title="Ellipse">○</div>
+      <div class="shape" data-tool="triangle" title="Triangle">△</div>
+      <div class="shape" data-tool="star" title="Star">★</div>
+    </div>
+    <label style="margin-top:6px;"><input type="checkbox" id="fill-shape"> Fill shape</label>
+    <label><input type="checkbox" id="use-pattern"> Use pattern as fill</label>
+
+    <h3>Color</h3>
+    <input type="color" id="color-picker" value="#222222">
+    <label>Size <span id="size-val">8</span>px</label>
+    <input type="range" id="size" min="1" max="120" value="8">
+    <label>Opacity <span id="opacity-val">100</span>%</label>
+    <input type="range" id="opacity" min="1" max="100" value="100">
+    <div class="size-preview" id="size-preview"><div></div></div>
+
+    <h3>Swatches</h3>
+    <div class="swatches-grid" id="swatches"></div>
+    <div class="btn-row" style="margin-top:6px;">
+      <button id="add-swatch">+ Add current</button>
+    </div>
+
+    <h3>Stamps</h3>
+    <div class="stamps-grid" id="stamps"></div>
+    <input type="text" id="custom-stamp" placeholder="Custom emoji/char" maxlength="2" style="margin-top:6px;">
+  </div>
+
+  <!-- CENTER -->
+  <div class="center">
+    <div class="canvas-stack" id="canvas-stack"></div>
+  </div>
+
+  <!-- RIGHT SIDEBAR -->
+  <div class="sidebar right">
+    <h3>Collaboration</h3>
+    <div id="collab-not-in">
+      <div class="btn-row">
+        <button id="host-room" class="primary">Host room</button>
+        <button id="show-join">Join…</button>
+      </div>
+      <div id="collab-join-form" style="display:none">
+        <input type="text" id="join-code" placeholder="Room code" maxlength="6" style="text-transform:uppercase">
+        <div class="btn-row" style="margin-top:4px;">
+          <button id="do-join" class="primary">Join</button>
+          <button id="cancel-join">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="collab-in" style="display:none">
+      <div id="collab-status" style="font-size:12px; color:#7fffaa; margin-bottom:6px;"></div>
+      <button id="leave-room" class="danger" style="width:100%;">Leave room</button>
+    </div>
+    <div style="font-size:10px;color:#667;margin-top:4px;">Painting syncs to the "Shared" layer. Peer-to-peer via PeerJS — no signup required.</div>
+
+    <h3>File</h3>
+    <div class="btn-row">
+      <button id="undo" title="Ctrl+Z">↶ Undo</button>
+      <button id="redo" title="Ctrl+Y">↷ Redo</button>
+    </div>
+    <div class="btn-row">
+      <button id="clear-layer" class="danger">Clear layer</button>
+    </div>
+    <div class="btn-row">
+      <button id="save" class="primary">💾 Save PNG</button>
+    </div>
+    <div class="btn-row">
+      <label style="display:flex; align-items:center; gap:6px; flex:1; margin:0;">
+        W <input type="number" id="canvas-w" value="900" min="100" max="4000">
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; flex:1; margin:0;">
+        H <input type="number" id="canvas-h" value="600" min="100" max="4000">
+      </label>
+    </div>
+    <div class="btn-row">
+      <button id="resize-canvas">Resize canvas</button>
+    </div>
+
+    <h3>Filters (active layer)</h3>
+    <div class="filters-grid">
+      <div class="filter-btn" data-filter="blur">Blur</div>
+      <div class="filter-btn" data-filter="sharpen">Sharpen</div>
+      <div class="filter-btn" data-filter="invert">Invert</div>
+      <div class="filter-btn" data-filter="grayscale">Grayscale</div>
+      <div class="filter-btn" data-filter="sepia">Sepia</div>
+      <div class="filter-btn" data-filter="brighten">Brighten</div>
+      <div class="filter-btn" data-filter="darken">Darken</div>
+      <div class="filter-btn" data-filter="contrast">+Contrast</div>
+      <div class="filter-btn" data-filter="emboss">Emboss</div>
+      <div class="filter-btn" data-filter="edge">Edges</div>
+    </div>
+
+    <h3>Adjustment layers</h3>
+    <div class="adjust-grid">
+      <div class="adjust-btn" data-adjust="exposure">Exposure</div>
+      <div class="adjust-btn" data-adjust="hue">Hue</div>
+      <div class="adjust-btn" data-adjust="saturation">Saturation</div>
+    </div>
+
+    <h3>Pattern</h3>
+    <label style="display:flex;align-items:center;gap:6px;">
+      Size
+      <select id="pattern-size">
+        <option value="16">16×16</option>
+        <option value="32">32×32</option>
+        <option value="64" selected>64×64</option>
+        <option value="128">128×128</option>
+        <option value="256">256×256</option>
+      </select>
+    </label>
+    <div class="pattern-wrap">
+      <div class="pattern-stack" id="pattern-stack"></div>
+    </div>
+    <div class="btn-row">
+      <button id="clear-pattern">Clear</button>
+      <button id="fill-pattern" class="primary">Fill layer</button>
+    </div>
+    <div style="font-size:11px;color:#88a;margin-bottom:6px;">
+      Draw on the tile with any tool, shape, or stamp. Use "Fill layer" or enable "Use pattern as fill" to apply.
+    </div>
+
+    <h3>Image search</h3>
+    <div class="img-search-row">
+      <input type="text" id="img-search-q" placeholder="e.g. cat, sunset, flower">
+      <button id="img-search-btn">🔍</button>
+    </div>
+    <div class="results-grid" id="img-results">
+      <div class="img-empty">Search Wikimedia Commons for free images.</div>
+    </div>
+    <div class="attribution" id="img-attr"></div>
+
+    <h3>Layers</h3>
+    <div class="btn-row">
+      <button id="add-layer">+ New</button>
+      <button id="dup-layer">⎘ Duplicate</button>
+    </div>
+    <div class="btn-row">
+      <button id="layer-up">▲ Up</button>
+      <button id="layer-down">▼ Down</button>
+    </div>
+    <div id="layers-list"></div>
+
+    <div class="status" id="status"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// PeerJS-based collaboration. Uses the public PeerJS Cloud broker.
+// No accounts or API keys — peers connect directly over WebRTC.
+// Room code = the host's peer ID. The host echoes events to all joiners
+// and replays the event log to anyone who joins late.
+const COLLAB_ID_PREFIX = 'drawtogether-';
+
+const collab = {
+  active: false,
+  isHost: false,
+  roomCode: null,
+  userId: 'u' + Math.random().toString(36).slice(2, 10),
+  peer: null,           // PeerJS Peer instance
+  conn: null,           // joiner's connection to the host
+  connections: [],      // host's list of joiner connections
+  eventLog: [],         // host keeps full history to replay to new joiners
+  layerId: null,
+  pendingPoints: null,  // accumulated for the current brush stroke
+};
+
+const state = {
+  width: 900, height: 600,
+  tool: 'pen', color: '#222222', size: 8, opacity: 1.0,
+  fillShape: false, usePattern: false, stamp: null,
+  layers: [], activeId: null,
+  drawing: false, startX: 0, startY: 0, lastX: 0, lastY: 0,
+  outputCanvas: null, outputCtx: null,
+  shapePreview: null,        // overlay on main stack
+  scratch: null,
+  undoStack: [], redoStack: [],
+  swatches: ['#222222','#ffffff','#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c','#3498db','#9b59b6','#34495e','#95a5a6','#000000','#7f8c8d','#16a085'],
+  stamps: ['⭐','❤️','😀','🌸','🌳','🐱','🐶','🍕','🚀','☁️','🌈','⚡','🔥','💎','🎈','🎉'],
+
+  // Pattern editor state
+  pattern: {
+    size: 64,
+    displayPx: 192,           // CSS size in sidebar
+    canvas: null, ctx: null,
+    shapePreview: null,       // overlay
+    undoStack: [], redoStack: [],
+  },
+
+  // Active drawing target during a stroke
+  currentTarget: null,
+
+  // Pending search-image to be placed; HTMLImageElement once loaded
+  pendingImage: null,
+  pendingImageMeta: null, // { title, url } for attribution
+};
+
+let nextLayerId = 1;
+const stackEl = document.getElementById('canvas-stack');
+
+// ---------- Layers ----------
+function createDrawLayer(name) {
+  const id = nextLayerId++;
+  const canvas = document.createElement('canvas');
+  canvas.width = state.width; canvas.height = state.height;
+  const ctx = canvas.getContext('2d');
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  return { id, type: 'draw', name: name || ('Layer ' + id), visible: true, canvas, ctx };
+}
+
+function createAdjustLayer(kind) {
+  const id = nextLayerId++;
+  const defaults = { exposure: 0, hue: 0, saturation: 1 };
+  const ranges = {
+    exposure:   { min: -3,   max: 3,   step: 0.05 },
+    hue:        { min: 0,    max: 360, step: 1 },
+    saturation: { min: 0,    max: 3,   step: 0.05 },
+  };
+  return {
+    id, type: 'adjust', name: kind.charAt(0).toUpperCase() + kind.slice(1),
+    visible: true, adjustKind: kind, adjustValue: defaults[kind], range: ranges[kind],
+  };
+}
+
+function activeLayer() {
+  return state.layers.find(l => l.id === state.activeId) || null;
+}
+
+// ---------- Compositor ----------
+function adjustFilterString(layer) {
+  const v = layer.adjustValue;
+  if (layer.adjustKind === 'exposure')   return `brightness(${Math.pow(2, v)})`;
+  if (layer.adjustKind === 'hue')        return `hue-rotate(${v}deg)`;
+  if (layer.adjustKind === 'saturation') return `saturate(${v})`;
+  return 'none';
+}
+
+function recomposite() {
+  const W = state.width, H = state.height;
+  const out = state.outputCtx;
+  out.clearRect(0, 0, W, H);
+  for (const layer of state.layers) {
+    if (!layer.visible) continue;
+    if (layer.type === 'draw') {
+      out.drawImage(layer.canvas, 0, 0);
+    } else if (layer.type === 'adjust') {
+      const s = state.scratch;
+      s.getContext('2d').clearRect(0, 0, W, H);
+      s.getContext('2d').drawImage(state.outputCanvas, 0, 0);
+      out.clearRect(0, 0, W, H);
+      out.filter = adjustFilterString(layer);
+      out.drawImage(s, 0, 0);
+      out.filter = 'none';
+    }
+  }
+}
+
+function rebuildStack() {
+  stackEl.innerHTML = '';
+  const W = state.width, H = state.height;
+
+  const bg = document.createElement('canvas');
+  bg.width = W; bg.height = H;
+  bg.style.width = W + 'px'; bg.style.height = H + 'px';
+  bg.className = 'bg';
+  const bgCtx = bg.getContext('2d');
+  bgCtx.fillStyle = '#ffffff';
+  bgCtx.fillRect(0, 0, W, H);
+  stackEl.appendChild(bg);
+
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  out.style.width = W + 'px'; out.style.height = H + 'px';
+  state.outputCanvas = out;
+  state.outputCtx = out.getContext('2d');
+  stackEl.appendChild(out);
+
+  const sc = document.createElement('canvas');
+  sc.width = W; sc.height = H;
+  state.scratch = sc;
+
+  if (!state.shapePreview) {
+    const c = document.createElement('canvas');
+    state.shapePreview = { canvas: c, ctx: c.getContext('2d') };
+  }
+  state.shapePreview.canvas.width = W;
+  state.shapePreview.canvas.height = H;
+  state.shapePreview.canvas.style.width = W + 'px';
+  state.shapePreview.canvas.style.height = H + 'px';
+  state.shapePreview.canvas.style.zIndex = 9999;
+  stackEl.appendChild(state.shapePreview.canvas);
+
+  stackEl.style.width = W + 'px';
+  stackEl.style.height = H + 'px';
+
+  bindOverlay(state.shapePreview.canvas, mainTarget);
+  refreshLayersUI();
+  recomposite();
+}
+
+function refreshLayersUI() {
+  const list = document.getElementById('layers-list');
+  list.innerHTML = '';
+  [...state.layers].reverse().forEach(l => {
+    const item = document.createElement('div');
+    item.className = 'layer-item' + (l.id === state.activeId ? ' active' : '');
+    const row = document.createElement('div');
+    row.className = 'layer-row';
+    const vis = document.createElement('span');
+    vis.className = 'vis'; vis.textContent = l.visible ? '👁️' : '⊘';
+    vis.onclick = (e) => {
+      e.stopPropagation();
+      l.visible = !l.visible;
+      refreshLayersUI();
+      recomposite();
+    };
+    const tag = document.createElement('span');
+    tag.className = 'tag' + (l.type === 'adjust' ? ' adj' : '');
+    tag.textContent = l.type === 'adjust' ? 'ADJ' : 'DRW';
+    const name = document.createElement('span');
+    name.className = 'name'; name.textContent = l.name;
+    name.ondblclick = (e) => {
+      e.stopPropagation();
+      const v = prompt('Layer name:', l.name);
+      if (v) { l.name = v; refreshLayersUI(); }
+    };
+    const del = document.createElement('span');
+    del.className = 'del'; del.textContent = '✕';
+    del.onclick = (e) => {
+      e.stopPropagation();
+      if (state.layers.filter(x => x.type === 'draw').length === 1 && l.type === 'draw') {
+        setStatus('Cannot delete last draw layer');
+        return;
+      }
+      deleteLayer(l.id);
+    };
+    row.appendChild(vis); row.appendChild(tag); row.appendChild(name); row.appendChild(del);
+    item.appendChild(row);
+
+    if (l.type === 'adjust') {
+      const ctrl = document.createElement('div');
+      ctrl.className = 'adj-control';
+      const lbl = document.createElement('span');
+      lbl.textContent = l.adjustKind;
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = l.range.min; slider.max = l.range.max; slider.step = l.range.step;
+      slider.value = l.adjustValue;
+      const valEl = document.createElement('span');
+      valEl.textContent = (+l.adjustValue).toFixed(2);
+      valEl.style.minWidth = '32px';
+      valEl.style.textAlign = 'right';
+      slider.oninput = (e) => {
+        e.stopPropagation();
+        l.adjustValue = parseFloat(slider.value);
+        valEl.textContent = l.adjustValue.toFixed(2);
+        recomposite();
+      };
+      slider.onclick = e => e.stopPropagation();
+      ctrl.appendChild(lbl); ctrl.appendChild(slider); ctrl.appendChild(valEl);
+      item.appendChild(ctrl);
+    }
+
+    item.onclick = () => { state.activeId = l.id; refreshLayersUI(); };
+    list.appendChild(item);
+  });
+}
+
+function deleteLayer(id) {
+  const idx = state.layers.findIndex(l => l.id === id);
+  if (idx < 0) return;
+  state.layers.splice(idx, 1);
+  if (state.activeId === id) {
+    const fallback = state.layers[Math.max(0, idx - 1)];
+    state.activeId = fallback ? fallback.id : null;
+  }
+  refreshLayersUI();
+  recomposite();
+}
+
+// ---------- Drawing targets ----------
+// A target encapsulates everything the drawing system needs:
+// the canvas to draw on, its dimensions, its shape preview overlay,
+// and what to do after a stroke commits (e.g. recomposite for main).
+function effectiveMainLayer() {
+  // In a collab room, drawing always goes to the shared layer
+  if (collab.active) {
+    const shared = state.layers.find(l => l.id === collab.layerId);
+    if (shared) return shared;
+  }
+  const l = activeLayer();
+  return l && l.type === 'draw' ? l : null;
+}
+
+const mainTarget = {
+  name: 'main',
+  get canvas() { const l = effectiveMainLayer(); return l ? l.canvas : null; },
+  get ctx()    { const l = effectiveMainLayer(); return l ? l.ctx : null; },
+  get width()  { return state.width; },
+  get height() { return state.height; },
+  get previewCtx() { return state.shapePreview.ctx; },
+  get previewCanvas() { return state.shapePreview.canvas; },
+  // Undo/redo stacks
+  undoStack: state.undoStack,
+  redoStack: state.redoStack,
+  // What the target considers a "layer id" — used to gate undo to its scope
+  getLayerId() { const l = effectiveMainLayer(); return l ? l.id : null; },
+  onCommit() { recomposite(); },
+  preStroke() {
+    const l = effectiveMainLayer();
+    if (!l) {
+      setStatus(collab.active ? 'Shared layer missing' : 'Select a draw layer');
+      return false;
+    }
+    if (!l.visible) { setStatus('Active layer is hidden'); return false; }
+    return true;
+  },
+};
+
+const patternTarget = {
+  name: 'pattern',
+  get canvas() { return state.pattern.canvas; },
+  get ctx()    { return state.pattern.ctx; },
+  get width()  { return state.pattern.size; },
+  get height() { return state.pattern.size; },
+  get previewCtx()    { return state.pattern.shapePreview.ctx; },
+  get previewCanvas() { return state.pattern.shapePreview.canvas; },
+  undoStack: state.pattern.undoStack,
+  redoStack: state.pattern.redoStack,
+  getLayerId() { return 'pattern'; },
+  onCommit() {},
+  preStroke() { return true; },
+};
+
+// ---------- Undo/redo ----------
+const UNDO_MAX = 30;
+let pendingBefore = null;
+
+function snapshotTarget(target) {
+  return target.ctx.getImageData(0, 0, target.width, target.height);
+}
+
+function beginStroke(target) {
+  pendingBefore = { target, layerId: target.getLayerId(), before: snapshotTarget(target) };
+}
+
+function endStroke() {
+  if (!pendingBefore) return;
+  const t = pendingBefore.target;
+  // Verify the layer still exists & matches
+  if (t === mainTarget && t.getLayerId() !== pendingBefore.layerId) {
+    pendingBefore = null;
+    return;
+  }
+  const after = snapshotTarget(t);
+  t.undoStack.push({ layerId: pendingBefore.layerId, before: pendingBefore.before, after });
+  if (t.undoStack.length > UNDO_MAX) t.undoStack.shift();
+  t.redoStack.length = 0;
+  pendingBefore = null;
+  t.onCommit();
+}
+
+function undo() {
+  // Undo whichever target was most recently used: prefer main, fall back to pattern
+  const t = state.currentTarget && state.currentTarget.undoStack.length ? state.currentTarget
+          : mainTarget.undoStack.length ? mainTarget
+          : patternTarget.undoStack.length ? patternTarget
+          : null;
+  if (!t) return setStatus('Nothing to undo');
+  const entry = t.undoStack.pop();
+  if (!entry) return setStatus('Nothing to undo');
+  if (t === mainTarget) {
+    const l = state.layers.find(x => x.id === entry.layerId);
+    if (l && l.type === 'draw') l.ctx.putImageData(entry.before, 0, 0);
+  } else {
+    t.ctx.putImageData(entry.before, 0, 0);
+  }
+  t.redoStack.push(entry);
+  t.onCommit();
+}
+function redo() {
+  const t = state.currentTarget && state.currentTarget.redoStack.length ? state.currentTarget
+          : mainTarget.redoStack.length ? mainTarget
+          : patternTarget.redoStack.length ? patternTarget
+          : null;
+  if (!t) return setStatus('Nothing to redo');
+  const entry = t.redoStack.pop();
+  if (!entry) return setStatus('Nothing to redo');
+  if (t === mainTarget) {
+    const l = state.layers.find(x => x.id === entry.layerId);
+    if (l && l.type === 'draw') l.ctx.putImageData(entry.after, 0, 0);
+  } else {
+    t.ctx.putImageData(entry.after, 0, 0);
+  }
+  t.undoStack.push(entry);
+  t.onCommit();
+}
+
+// ---------- Stroke styles & tools ----------
+function getPatternFill(ctx, target) {
+  // Don't reference the pattern as a fill source when drawing ON the pattern itself.
+  if (target === patternTarget) return state.color;
+  if (state.usePattern && state.pattern.canvas) {
+    return ctx.createPattern(state.pattern.canvas, 'repeat');
+  }
+  return state.color;
+}
+function applyStrokeStyle(ctx, target) {
+  ctx.globalAlpha = state.opacity;
+  ctx.strokeStyle = state.color;
+  ctx.fillStyle = (state.usePattern && target !== patternTarget) ? getPatternFill(ctx, target) : state.color;
+  ctx.lineWidth = state.size;
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// Scale the brush size to the target — pattern canvas is small so brush should be too.
+function effectiveSize(target) {
+  if (target === patternTarget) {
+    // Scale roughly so a "16px brush on main" feels similar relative size on the tile.
+    const scale = target.width / state.width;
+    return Math.max(1, state.size * Math.max(scale, 0.15));
+  }
+  return state.size;
+}
+
+function drawSegment(ctx, target, x0, y0, x1, y1) {
+  const tool = state.tool;
+  const size = effectiveSize(target);
+  if (tool === 'pen') {
+    applyStrokeStyle(ctx, target);
+    ctx.lineWidth = size;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  } else if (tool === 'marker') {
+    applyStrokeStyle(ctx, target);
+    ctx.globalAlpha = state.opacity * 0.5;
+    ctx.lineWidth = size * 1.6;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  } else if (tool === 'pencil') {
+    applyStrokeStyle(ctx, target);
+    ctx.globalAlpha = state.opacity * 0.7;
+    ctx.lineWidth = Math.max(1, size * 0.4);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  } else if (tool === 'spray') {
+    applyStrokeStyle(ctx, target);
+    const r = size;
+    const n = Math.max(2, Math.floor(r * 1.5));
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const dist = Math.random() * r;
+      const x = x1 + Math.cos(a) * dist;
+      const y = y1 + Math.sin(a) * dist;
+      ctx.globalAlpha = state.opacity * (0.3 + Math.random() * 0.4);
+      ctx.fillRect(x, y, 1, 1);
+    }
+  } else if (tool === 'calligraphy') {
+    applyStrokeStyle(ctx, target);
+    const angle = Math.PI / 4;
+    const w = size, h = Math.max(2, size * 0.4);
+    const dx = x1 - x0, dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.ceil(dist / 1.5));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = x0 + dx * t, y = y0 + dy * t;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.restore();
+    }
+  } else if (tool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = size;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+}
+
+function drawShape(ctx, target, tool, x0, y0, x1, y1) {
+  applyStrokeStyle(ctx, target);
+  ctx.lineWidth = effectiveSize(target);
+  const minX = Math.min(x0, x1), minY = Math.min(y0, y1);
+  const w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
+  if (tool === 'rect') {
+    if (state.fillShape) ctx.fillRect(minX, minY, w, h);
+    else ctx.strokeRect(minX, minY, w, h);
+  } else if (tool === 'ellipse') {
+    ctx.beginPath();
+    ctx.ellipse(minX + w/2, minY + h/2, w/2, h/2, 0, 0, Math.PI * 2);
+    if (state.fillShape) ctx.fill(); else ctx.stroke();
+  } else if (tool === 'line') {
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  } else if (tool === 'triangle') {
+    ctx.beginPath();
+    ctx.moveTo(minX + w/2, minY);
+    ctx.lineTo(minX, minY + h);
+    ctx.lineTo(minX + w, minY + h);
+    ctx.closePath();
+    if (state.fillShape) ctx.fill(); else ctx.stroke();
+  } else if (tool === 'star') {
+    const cx = minX + w/2, cy = minY + h/2;
+    const rOuter = Math.min(w, h) / 2;
+    const rInner = rOuter * 0.4;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? rOuter : rInner;
+      const a = -Math.PI/2 + i * Math.PI / 5;
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    if (state.fillShape) ctx.fill(); else ctx.stroke();
+  }
+}
+
+function floodFill(ctx, x, y, hexColor) {
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  x = Math.floor(x); y = Math.floor(y);
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const img = ctx.getImageData(0, 0, W, H);
+  const data = img.data;
+  const idx = (px, py) => (py * W + px) * 4;
+  const target = [data[idx(x,y)], data[idx(x,y)+1], data[idx(x,y)+2], data[idx(x,y)+3]];
+  const r = parseInt(hexColor.slice(1,3),16);
+  const g = parseInt(hexColor.slice(3,5),16);
+  const b = parseInt(hexColor.slice(5,7),16);
+  const a = Math.round(state.opacity * 255);
+  if (target[0]===r && target[1]===g && target[2]===b && target[3]===a) return;
+  const match = (i) => data[i]===target[0] && data[i+1]===target[1] && data[i+2]===target[2] && data[i+3]===target[3];
+  const stack = [[x, y]];
+  while (stack.length) {
+    const [cx, cy] = stack.pop();
+    let nx = cx;
+    while (nx >= 0 && match(idx(nx, cy))) nx--;
+    nx++;
+    let spanUp = false, spanDown = false;
+    while (nx < W && match(idx(nx, cy))) {
+      const i = idx(nx, cy);
+      data[i]=r; data[i+1]=g; data[i+2]=b; data[i+3]=a;
+      if (cy > 0) {
+        if (!spanUp && match(idx(nx, cy-1))) { stack.push([nx, cy-1]); spanUp = true; }
+        else if (spanUp && !match(idx(nx, cy-1))) spanUp = false;
+      }
+      if (cy < H - 1) {
+        if (!spanDown && match(idx(nx, cy+1))) { stack.push([nx, cy+1]); spanDown = true; }
+        else if (spanDown && !match(idx(nx, cy+1))) spanDown = false;
+      }
+      nx++;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function drawStamp(ctx, target, x, y) {
+  ctx.save();
+  ctx.globalAlpha = state.opacity;
+  const size = effectiveSize(target) * 4;
+  ctx.font = size + 'px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(state.stamp, x, y);
+  ctx.restore();
+}
+
+// ---------- Pattern fill (region) on main canvas ----------
+function fillRegionWithPattern(ctx, x, y) {
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  x = Math.floor(x); y = Math.floor(y);
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const img = ctx.getImageData(0, 0, W, H);
+  const data = img.data;
+  const idx = (px, py) => (py * W + px) * 4;
+  const target = [data[idx(x,y)], data[idx(x,y)+1], data[idx(x,y)+2], data[idx(x,y)+3]];
+  const match = (i) => data[i]===target[0] && data[i+1]===target[1] && data[i+2]===target[2] && data[i+3]===target[3];
+  const mask = new Uint8Array(W * H);
+  const stack = [[x, y]];
+  while (stack.length) {
+    const [cx, cy] = stack.pop();
+    let nx = cx;
+    while (nx >= 0 && match(idx(nx, cy)) && !mask[cy * W + nx]) nx--;
+    nx++;
+    let spanUp = false, spanDown = false;
+    while (nx < W && match(idx(nx, cy)) && !mask[cy * W + nx]) {
+      mask[cy * W + nx] = 1;
+      if (cy > 0 && match(idx(nx, cy-1)) && !mask[(cy-1) * W + nx]) {
+        if (!spanUp) { stack.push([nx, cy-1]); spanUp = true; }
+      } else spanUp = false;
+      if (cy < H - 1 && match(idx(nx, cy+1)) && !mask[(cy+1) * W + nx]) {
+        if (!spanDown) { stack.push([nx, cy+1]); spanDown = true; }
+      } else spanDown = false;
+      nx++;
+    }
+  }
+  const tmp = document.createElement('canvas');
+  tmp.width = W; tmp.height = H;
+  const tctx = tmp.getContext('2d');
+  tctx.fillStyle = tctx.createPattern(state.pattern.canvas, 'repeat');
+  tctx.globalAlpha = state.opacity;
+  tctx.fillRect(0, 0, W, H);
+  const patImg = tctx.getImageData(0, 0, W, H);
+  for (let i = 0, p = 0; i < mask.length; i++, p += 4) {
+    if (mask[i]) {
+      data[p]   = patImg.data[p];
+      data[p+1] = patImg.data[p+1];
+      data[p+2] = patImg.data[p+2];
+      data[p+3] = patImg.data[p+3];
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// ---------- Filters ----------
+function applyFilter(name) {
+  const l = activeLayer();
+  if (!l || l.type !== 'draw') { setStatus('Select a draw layer'); return; }
+  // Use the main target for undo bookkeeping
+  beginStroke(mainTarget);
+  const W = state.width, H = state.height;
+  const filterMap = {
+    blur:'blur(3px)', grayscale:'grayscale(1)', sepia:'sepia(1)', invert:'invert(1)',
+    brighten:'brightness(1.25)', darken:'brightness(0.75)', contrast:'contrast(1.5)',
+  };
+  if (filterMap[name]) {
+    const tmp = document.createElement('canvas');
+    tmp.width = W; tmp.height = H;
+    const tctx = tmp.getContext('2d');
+    tctx.filter = filterMap[name];
+    tctx.drawImage(l.canvas, 0, 0);
+    l.ctx.clearRect(0, 0, W, H);
+    l.ctx.drawImage(tmp, 0, 0);
+  } else if (name === 'sharpen') {
+    applyConvolution(l.ctx, [0,-1,0, -1,5,-1, 0,-1,0]);
+  } else if (name === 'emboss') {
+    applyConvolution(l.ctx, [-2,-1,0, -1,1,1, 0,1,2]);
+  } else if (name === 'edge') {
+    applyConvolution(l.ctx, [-1,-1,-1, -1,8,-1, -1,-1,-1]);
+  }
+  endStroke();
+  setStatus('Applied ' + name);
+}
+
+function applyConvolution(ctx, kernel) {
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  const src = ctx.getImageData(0, 0, W, H);
+  const dst = ctx.createImageData(W, H);
+  const s = src.data, d = dst.data;
+  const ks = Math.sqrt(kernel.length) | 0;
+  const half = ks >> 1;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let r = 0, g = 0, b = 0;
+      for (let ky = 0; ky < ks; ky++) {
+        for (let kx = 0; kx < ks; kx++) {
+          const sx = Math.min(W - 1, Math.max(0, x + kx - half));
+          const sy = Math.min(H - 1, Math.max(0, y + ky - half));
+          const i = (sy * W + sx) * 4;
+          const k = kernel[ky * ks + kx];
+          r += s[i]   * k;
+          g += s[i+1] * k;
+          b += s[i+2] * k;
+        }
+      }
+      const di = (y * W + x) * 4;
+      d[di]   = Math.min(255, Math.max(0, r));
+      d[di+1] = Math.min(255, Math.max(0, g));
+      d[di+2] = Math.min(255, Math.max(0, b));
+      d[di+3] = s[di+3];
+    }
+  }
+  ctx.putImageData(dst, 0, 0);
+}
+
+// ---------- Pointer handling (shared between targets) ----------
+function bindOverlay(overlay, target) {
+  overlay.style.pointerEvents = 'auto';
+  overlay.style.cursor = 'crosshair';
+  overlay.onmousedown = (e) => onPointerDown(e, target);
+  overlay.onmousemove = (e) => onPointerMove(e, target);
+  overlay.onmouseup   = (e) => onPointerUp(e, target);
+  overlay.onmouseleave= (e) => onPointerUp(e, target);
+  overlay.ontouchstart = (e) => { e.preventDefault(); onPointerDown(touchToMouse(e), target); };
+  overlay.ontouchmove  = (e) => { e.preventDefault(); onPointerMove(touchToMouse(e), target); };
+  overlay.ontouchend   = (e) => { e.preventDefault(); onPointerUp(touchToMouse(e), target); };
+}
+function touchToMouse(e) {
+  const t = e.touches[0] || e.changedTouches[0];
+  return { clientX: t.clientX, clientY: t.clientY };
+}
+function canvasPos(e, target) {
+  const rect = target.previewCanvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) * (target.width / rect.width),
+    y: (e.clientY - rect.top)  * (target.height / rect.height),
+  };
+}
+
+const SHAPE_TOOLS = new Set(['line','rect','ellipse','triangle','star']);
+const BRUSH_TOOLS = new Set(['pen','marker','pencil','spray','calligraphy','eraser']);
+
+function drawPlacedImage(ctx, x0, y0, x1, y1, shiftKey) {
+  const img = state.pendingImage;
+  if (!img) return;
+  let w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
+  let minX = Math.min(x0, x1), minY = Math.min(y0, y1);
+  // Tiny drag → place at default size centered on click
+  if (w < 4 || h < 4) {
+    const maxDim = 320;
+    const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+    w = img.width * scale; h = img.height * scale;
+    minX = x0 - w / 2; minY = y0 - h / 2;
+  } else if (shiftKey) {
+    // Preserve aspect ratio
+    const ratio = img.width / img.height;
+    if (w / h > ratio) w = h * ratio; else h = w / ratio;
+    minX = (x1 >= x0) ? x0 : x0 - w;
+    minY = (y1 >= y0) ? y0 : y0 - h;
+  }
+  ctx.save();
+  ctx.globalAlpha = state.opacity;
+  ctx.drawImage(img, minX, minY, w, h);
+  ctx.restore();
+}
+
+function onPointerDown(e, target) {
+  if (!target.preStroke()) return;
+  if (!target.ctx) return;
+  state.currentTarget = target;
+  const { x, y } = canvasPos(e, target);
+  state.startX = state.lastX = x;
+  state.startY = state.lastY = y;
+
+  if (state.tool === 'eyedrop') { pickColorAt(target, x, y); return; }
+  if (state.tool === 'fill') {
+    beginStroke(target);
+    if (state.usePattern && state.pattern.canvas && target !== patternTarget) {
+      fillRegionWithPattern(target.ctx, x, y);
+    } else {
+      floodFill(target.ctx, x, y, state.color);
+      collabPush(target, 'fill', { x, y, color: state.color, opacity: state.opacity });
+    }
+    endStroke(); return;
+  }
+  if (state.tool === 'stamp' && state.stamp) {
+    beginStroke(target);
+    drawStamp(target.ctx, target, x, y);
+    collabPush(target, 'stamp', { x, y, stamp: state.stamp, color: state.color, size: state.size, opacity: state.opacity });
+    endStroke(); return;
+  }
+  if (state.tool === 'image') {
+    if (!state.pendingImage) { setStatus('Pick an image from search first'); return; }
+    state.drawing = true;
+    beginStroke(target);
+    return;
+  }
+  if (BRUSH_TOOLS.has(state.tool)) {
+    state.drawing = true;
+    beginStroke(target);
+    collab.pendingPoints = (target === mainTarget) ? [[x, y]] : null;
+    drawSegment(target.ctx, target, x, y, x, y);
+    if (target === mainTarget) recomposite();
+    return;
+  }
+  if (SHAPE_TOOLS.has(state.tool)) {
+    state.drawing = true;
+    beginStroke(target);
+  }
+}
+
+function onPointerMove(e, target) {
+  if (!state.drawing || state.currentTarget !== target) return;
+  const { x, y } = canvasPos(e, target);
+  if (BRUSH_TOOLS.has(state.tool)) {
+    drawSegment(target.ctx, target, state.lastX, state.lastY, x, y);
+    state.lastX = x; state.lastY = y;
+    if (collab.pendingPoints) collab.pendingPoints.push([x, y]);
+    if (target === mainTarget) recomposite();
+  } else if (SHAPE_TOOLS.has(state.tool)) {
+    const ctx = target.previewCtx;
+    ctx.clearRect(0, 0, target.width, target.height);
+    drawShape(ctx, target, state.tool, state.startX, state.startY, x, y);
+    state.lastX = x; state.lastY = y;
+  } else if (state.tool === 'image') {
+    const ctx = target.previewCtx;
+    ctx.clearRect(0, 0, target.width, target.height);
+    drawPlacedImage(ctx, state.startX, state.startY, x, y, e.shiftKey);
+    state.lastX = x; state.lastY = y;
+  }
+}
+
+function onPointerUp(e, target) {
+  if (!state.drawing || state.currentTarget !== target) return;
+  state.drawing = false;
+  if (SHAPE_TOOLS.has(state.tool)) {
+    drawShape(target.ctx, target, state.tool, state.startX, state.startY, state.lastX, state.lastY);
+    target.previewCtx.clearRect(0, 0, target.width, target.height);
+    collabPush(target, 'shape', {
+      tool: state.tool, color: state.color, size: state.size, opacity: state.opacity,
+      fillShape: state.fillShape,
+      x0: state.startX, y0: state.startY, x1: state.lastX, y1: state.lastY,
+    });
+  } else if (state.tool === 'image') {
+    drawPlacedImage(target.ctx, state.startX, state.startY, state.lastX, state.lastY, e && e.shiftKey);
+    target.previewCtx.clearRect(0, 0, target.width, target.height);
+    if (state.pendingImage && state.pendingImageMeta) {
+      const img = state.pendingImage;
+      let w = Math.abs(state.lastX - state.startX), h = Math.abs(state.lastY - state.startY);
+      let minX, minY;
+      if (w < 4 || h < 4) {
+        const maxDim = 320;
+        const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+        w = img.width * scale; h = img.height * scale;
+        minX = state.startX - w/2; minY = state.startY - h/2;
+      } else {
+        minX = Math.min(state.startX, state.lastX);
+        minY = Math.min(state.startY, state.lastY);
+      }
+      collabPush(target, 'image', {
+        url: state.pendingImageMeta.url, x: minX, y: minY, w, h, opacity: state.opacity,
+      });
+    }
+  } else if (BRUSH_TOOLS.has(state.tool) && collab.pendingPoints) {
+    collabPush(target, 'brush', {
+      tool: state.tool, color: state.color, size: state.size, opacity: state.opacity,
+      points: collab.pendingPoints,
+    });
+    collab.pendingPoints = null;
+  }
+  endStroke();
+}
+
+function pickColorAt(target, x, y) {
+  let p;
+  if (target === mainTarget) {
+    p = state.outputCtx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+  } else {
+    p = target.ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+  }
+  if (p[3] > 0) {
+    const hex = '#' + [p[0],p[1],p[2]].map(v => v.toString(16).padStart(2,'0')).join('');
+    setColor(hex); setStatus('Picked ' + hex); return;
+  }
+  setColor('#ffffff'); setStatus('Picked background');
+}
+
+// ---------- Pattern editor ----------
+function rebuildPatternStack() {
+  const wrap = document.getElementById('pattern-stack');
+  wrap.innerHTML = '';
+  const sz = state.pattern.size;
+  const dpx = state.pattern.displayPx;
+
+  // Checker bg
+  const bg = document.createElement('canvas');
+  bg.width = sz; bg.height = sz;
+  bg.className = 'bg';
+  bg.style.width = dpx + 'px'; bg.style.height = dpx + 'px';
+  wrap.appendChild(bg);
+
+  // Drawing canvas
+  const c = document.createElement('canvas');
+  c.width = sz; c.height = sz;
+  c.style.width = dpx + 'px'; c.style.height = dpx + 'px';
+  const ctx = c.getContext('2d');
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  state.pattern.canvas = c;
+  state.pattern.ctx = ctx;
+  wrap.appendChild(c);
+
+  // Shape preview overlay
+  if (!state.pattern.shapePreview) {
+    const pc = document.createElement('canvas');
+    state.pattern.shapePreview = { canvas: pc, ctx: pc.getContext('2d') };
+  }
+  const pc = state.pattern.shapePreview.canvas;
+  pc.width = sz; pc.height = sz;
+  pc.style.width = dpx + 'px'; pc.style.height = dpx + 'px';
+  pc.style.zIndex = 9999;
+  wrap.appendChild(pc);
+
+  wrap.style.width = dpx + 'px';
+  wrap.style.height = dpx + 'px';
+
+  bindOverlay(pc, patternTarget);
+}
+
+function resizePattern(newSize) {
+  const oldCanvas = state.pattern.canvas;
+  state.pattern.size = newSize;
+  state.pattern.undoStack.length = 0;
+  state.pattern.redoStack.length = 0;
+  rebuildPatternStack();
+  // Preserve previous tile, scaled to new size
+  if (oldCanvas && oldCanvas.width > 0) {
+    state.pattern.ctx.drawImage(oldCanvas, 0, 0, newSize, newSize);
+  }
+}
+
+function clearPattern() {
+  beginStroke(patternTarget);
+  state.pattern.ctx.clearRect(0, 0, state.pattern.size, state.pattern.size);
+  endStroke();
+}
+
+function fillLayerWithPattern() {
+  const l = activeLayer();
+  if (!l || l.type !== 'draw') { setStatus('Select a draw layer'); return; }
+  beginStroke(mainTarget);
+  const pat = l.ctx.createPattern(state.pattern.canvas, 'repeat');
+  l.ctx.fillStyle = pat;
+  l.ctx.globalAlpha = state.opacity;
+  l.ctx.fillRect(0, 0, state.width, state.height);
+  endStroke();
+}
+
+// ---------- UI ----------
+function setTool(tool) {
+  state.tool = tool;
+  document.querySelectorAll('.tool, .shape, .stamp').forEach(el => el.classList.remove('active'));
+  const el = document.querySelector(`[data-tool="${tool}"]`);
+  if (el) el.classList.add('active');
+}
+
+function setColor(hex) {
+  state.color = hex;
+  document.getElementById('color-picker').value = hex;
+  updateSizePreview();
+}
+
+function setStatus(s) {
+  const el = document.getElementById('status');
+  el.textContent = s;
+  if (s) setTimeout(() => { if (el.textContent === s) el.textContent = ''; }, 2500);
+}
+
+function updateSizePreview() {
+  const wrap = document.getElementById('size-preview');
+  wrap.style.color = state.color;
+  const dot = wrap.firstElementChild;
+  const s = Math.min(state.size, 28);
+  dot.style.width = s + 'px';
+  dot.style.height = s + 'px';
+  dot.style.opacity = state.opacity;
+}
+
+function buildSwatches() {
+  const el = document.getElementById('swatches');
+  el.innerHTML = '';
+  state.swatches.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.className = 'swatch';
+    d.style.background = c;
+    d.title = c + ' (right-click to remove)';
+    d.onclick = () => setColor(c);
+    d.oncontextmenu = (e) => { e.preventDefault(); state.swatches.splice(i, 1); buildSwatches(); };
+    el.appendChild(d);
+  });
+}
+
+function buildStamps() {
+  const el = document.getElementById('stamps');
+  el.innerHTML = '';
+  state.stamps.forEach(s => {
+    const d = document.createElement('div');
+    d.className = 'stamp';
+    d.textContent = s;
+    d.title = 'Click then click canvas to place';
+    d.onclick = () => {
+      state.stamp = s;
+      state.tool = 'stamp';
+      document.querySelectorAll('.tool, .shape, .stamp').forEach(x => x.classList.remove('active'));
+      d.classList.add('active');
+      setStatus('Stamp: ' + s);
+    };
+    el.appendChild(d);
+  });
+}
+
+// ---------- Image search (Wikimedia Commons) ----------
+async function searchImages(query) {
+  const grid = document.getElementById('img-results');
+  grid.innerHTML = '<div class="img-empty">Searching…</div>';
+  const url = 'https://commons.wikimedia.org/w/api.php?'
+    + 'action=query&generator=search'
+    + '&gsrsearch=' + encodeURIComponent(query + ' filetype:bitmap|drawing')
+    + '&gsrnamespace=6&gsrlimit=24'
+    + '&prop=imageinfo&iiprop=url|mime|extmetadata&iiurlwidth=180'
+    + '&format=json&origin=*';
+  try {
+    const r = await fetch(url);
+    const data = await r.json();
+    const pages = (data.query && data.query.pages) || {};
+    let results = Object.values(pages)
+      .filter(p => p.imageinfo && p.imageinfo[0])
+      .sort((a, b) => (a.index || 0) - (b.index || 0));
+    // Filter to image MIME types
+    results = results.filter(p => {
+      const m = p.imageinfo[0].mime || '';
+      return m.startsWith('image/');
+    });
+    renderResults(results);
+  } catch (err) {
+    grid.innerHTML = '<div class="img-empty">Search failed: ' + (err.message || err) + '</div>';
+  }
+}
+
+function renderResults(results) {
+  const grid = document.getElementById('img-results');
+  grid.innerHTML = '';
+  if (!results.length) {
+    grid.innerHTML = '<div class="img-empty">No results.</div>';
+    return;
+  }
+  results.forEach(p => {
+    const info = p.imageinfo[0];
+    const thumb = info.thumburl || info.url;
+    const full  = info.url;
+    const cell = document.createElement('div');
+    cell.className = 'img-result';
+    cell.title = p.title + '\nClick to load — then drag on canvas to place.';
+    const im = document.createElement('img');
+    im.src = thumb; im.alt = p.title;
+    im.loading = 'lazy';
+    cell.appendChild(im);
+    cell.onclick = () => loadAndSelectImage(full, p.title, info.extmetadata);
+    grid.appendChild(cell);
+  });
+}
+
+function loadAndSelectImage(url, title, meta) {
+  setStatus('Loading image…');
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    state.pendingImage = img;
+    state.pendingImageMeta = { title, url };
+    setTool('image');
+    // Show attribution
+    const attrEl = document.getElementById('img-attr');
+    const artist = meta && meta.Artist ? stripHtml(meta.Artist.value) : 'Unknown';
+    const license = meta && meta.LicenseShortName ? stripHtml(meta.LicenseShortName.value) : '';
+    attrEl.innerHTML = `<b>${escapeHtml(title.replace(/^File:/, ''))}</b><br>By ${artist}${license ? ' · ' + license : ''}`;
+    setStatus('Drag on canvas to place (Shift = keep aspect)');
+  };
+  img.onerror = () => {
+    setStatus('Failed to load image (CORS or 404)');
+    state.pendingImage = null;
+  };
+  img.src = url;
+}
+
+function stripHtml(s) {
+  const d = document.createElement('div'); d.innerHTML = s;
+  return d.textContent || d.innerText || '';
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---------- PeerJS collaboration ----------
+function peerjsAvailable() { return typeof Peer !== 'undefined'; }
+
+function genRoomCode() {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function ensureSharedLayer() {
+  let shared = state.layers.find(l => l.type === 'draw' && l.name === 'Shared');
+  if (!shared) {
+    shared = createDrawLayer('Shared');
+    state.layers.push(shared);
+  }
+  collab.layerId = shared.id;
+  state.activeId = shared.id;
+  refreshLayersUI();
+  recomposite();
+}
+
+function showCollabUI(label) {
+  document.getElementById('collab-not-in').style.display = 'none';
+  document.getElementById('collab-in').style.display = '';
+  document.getElementById('collab-status').textContent = label;
+}
+
+async function hostRoom() {
+  if (!peerjsAvailable()) { setStatus('PeerJS not loaded'); return; }
+  if (collab.active) { setStatus('Already in a room'); return; }
+  const code = genRoomCode();
+  setStatus('Creating room ' + code + '…');
+  const peer = new Peer(COLLAB_ID_PREFIX + code);
+  collab.peer = peer;
+  collab.isHost = true;
+  collab.connections = [];
+  collab.eventLog = [];
+  peer.on('open', id => {
+    collab.active = true;
+    collab.roomCode = code;
+    ensureSharedLayer();
+    showCollabUI('🟢 Hosting room: ' + code);
+    setStatus('Hosting room ' + code + ' — share the code!');
+  });
+  peer.on('connection', conn => {
+    conn.on('open', () => {
+      collab.connections.push(conn);
+      // Replay full history to the new joiner
+      conn.send({ _kind: 'history', events: collab.eventLog });
+      setStatus('Peer joined (' + collab.connections.length + ' total)');
+    });
+    conn.on('data', data => {
+      if (!data || data._kind === 'history') return;
+      // Apply locally, append to log, broadcast to other peers
+      applyRemoteEvent(data);
+      collab.eventLog.push(data);
+      for (const c of collab.connections) {
+        if (c !== conn && c.open) c.send(data);
+      }
+    });
+    conn.on('close', () => {
+      collab.connections = collab.connections.filter(c => c !== conn);
+      setStatus('Peer left (' + collab.connections.length + ' remaining)');
+    });
+    conn.on('error', err => console.warn('Peer conn error:', err));
+  });
+  peer.on('error', err => {
+    if (err.type === 'unavailable-id') {
+      setStatus('Code collision — retrying…');
+      peer.destroy();
+      collab.peer = null;
+      collab.isHost = false;
+      hostRoom();
+    } else {
+      setStatus('Peer error: ' + err.type);
+    }
+  });
+  peer.on('disconnected', () => setStatus('Disconnected from broker'));
+}
+
+async function joinRoomByCode(code) {
+  if (!peerjsAvailable()) { setStatus('PeerJS not loaded'); return; }
+  if (collab.active) { setStatus('Already in a room'); return; }
+  code = (code || '').trim().toUpperCase();
+  if (!code) return;
+  setStatus('Joining ' + code + '…');
+  const peer = new Peer();
+  collab.peer = peer;
+  collab.isHost = false;
+  peer.on('open', () => {
+    const conn = peer.connect(COLLAB_ID_PREFIX + code, { reliable: true });
+    collab.conn = conn;
+    let opened = false;
+    conn.on('open', () => {
+      opened = true;
+      collab.active = true;
+      collab.roomCode = code;
+      ensureSharedLayer();
+      showCollabUI('🟢 Joined room: ' + code);
+      setStatus('Connected to ' + code);
+    });
+    conn.on('data', data => {
+      if (!data) return;
+      if (data._kind === 'history') {
+        for (const e of (data.events || [])) applyRemoteEvent(e);
+        recomposite();
+        return;
+      }
+      applyRemoteEvent(data);
+    });
+    conn.on('close', () => {
+      setStatus('Host disconnected');
+      leaveRoom();
+    });
+    conn.on('error', err => setStatus('Conn error: ' + err));
+    // If no 'open' fires within a few seconds, the room likely doesn't exist
+    setTimeout(() => {
+      if (!opened && collab.peer === peer) {
+        setStatus('Room not found or unreachable');
+        leaveRoom();
+      }
+    }, 8000);
+  });
+  peer.on('error', err => {
+    if (err.type === 'peer-unavailable') {
+      setStatus('Room ' + code + ' not found');
+    } else {
+      setStatus('Peer error: ' + err.type);
+    }
+    leaveRoom();
+  });
+}
+
+function leaveRoom() {
+  if (collab.peer) {
+    try { collab.peer.destroy(); } catch (e) {}
+  }
+  collab.peer = null;
+  collab.conn = null;
+  collab.connections = [];
+  collab.eventLog = [];
+  collab.active = false;
+  collab.isHost = false;
+  collab.roomCode = null;
+  collab.layerId = null;
+  document.getElementById('collab-not-in').style.display = '';
+  document.getElementById('collab-in').style.display = 'none';
+  document.getElementById('collab-join-form').style.display = 'none';
+  document.getElementById('collab-status').textContent = '';
+  setStatus('Left room');
+}
+
+function collabPush(target, type, payload) {
+  if (!collab.active) return;
+  if (target !== mainTarget) return; // only sync main canvas
+  const evt = { userId: collab.userId, type, payload, ts: Date.now() };
+  if (collab.isHost) {
+    collab.eventLog.push(evt);
+    for (const c of collab.connections) {
+      if (c.open) c.send(evt);
+    }
+  } else if (collab.conn && collab.conn.open) {
+    collab.conn.send(evt);
+  }
+}
+
+function applyRemoteEvent(evt) {
+  const layer = state.layers.find(l => l.id === collab.layerId);
+  if (!layer) return;
+  const ctx = layer.ctx;
+  const p = evt.payload || {};
+  // Save current rendering state so the remote event uses its own params
+  const saved = {
+    color: state.color, size: state.size, opacity: state.opacity,
+    tool: state.tool, fillShape: state.fillShape, stamp: state.stamp,
+    usePattern: state.usePattern,
+  };
+  state.usePattern = false;
+  try {
+    if (evt.type === 'brush') {
+      state.color = p.color; state.size = p.size; state.opacity = p.opacity; state.tool = p.tool;
+      const pts = p.points || [];
+      if (pts.length === 1) drawSegment(ctx, mainTarget, pts[0][0], pts[0][1], pts[0][0], pts[0][1]);
+      for (let i = 0; i < pts.length - 1; i++) {
+        drawSegment(ctx, mainTarget, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]);
+      }
+    } else if (evt.type === 'shape') {
+      state.color = p.color; state.size = p.size; state.opacity = p.opacity; state.fillShape = p.fillShape;
+      drawShape(ctx, mainTarget, p.tool, p.x0, p.y0, p.x1, p.y1);
+    } else if (evt.type === 'fill') {
+      state.opacity = p.opacity;
+      floodFill(ctx, p.x, p.y, p.color);
+    } else if (evt.type === 'stamp') {
+      state.color = p.color; state.size = p.size; state.opacity = p.opacity; state.stamp = p.stamp;
+      drawStamp(ctx, mainTarget, p.x, p.y);
+    } else if (evt.type === 'image') {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        ctx.save();
+        ctx.globalAlpha = p.opacity != null ? p.opacity : 1;
+        ctx.drawImage(img, p.x, p.y, p.w, p.h);
+        ctx.restore();
+        recomposite();
+      };
+      img.src = p.url;
+    } else if (evt.type === 'clear-layer') {
+      ctx.clearRect(0, 0, state.width, state.height);
+    }
+  } catch (e) {
+    console.error('Failed to apply remote event', e);
+  } finally {
+    state.color = saved.color; state.size = saved.size; state.opacity = saved.opacity;
+    state.tool = saved.tool; state.fillShape = saved.fillShape; state.stamp = saved.stamp;
+    state.usePattern = saved.usePattern;
+    recomposite();
+  }
+}
+
+function init() {
+  const l1 = createDrawLayer('Background');
+  const l2 = createDrawLayer('Layer 2');
+  state.layers = [l1, l2];
+  state.activeId = l2.id;
+  rebuildStack();
+  rebuildPatternStack();
+  buildSwatches();
+  buildStamps();
+  updateSizePreview();
+  wireControls();
+}
+
+function wireControls() {
+  document.querySelectorAll('.tool, .shape').forEach(el => {
+    el.onclick = () => setTool(el.dataset.tool);
+  });
+  document.getElementById('color-picker').oninput = e => setColor(e.target.value);
+  document.getElementById('size').oninput = e => {
+    state.size = parseInt(e.target.value, 10);
+    document.getElementById('size-val').textContent = state.size;
+    updateSizePreview();
+  };
+  document.getElementById('opacity').oninput = e => {
+    state.opacity = parseInt(e.target.value, 10) / 100;
+    document.getElementById('opacity-val').textContent = e.target.value;
+    updateSizePreview();
+  };
+  document.getElementById('fill-shape').onchange = e => { state.fillShape = e.target.checked; };
+  document.getElementById('use-pattern').onchange = e => { state.usePattern = e.target.checked; };
+  document.getElementById('add-swatch').onclick = () => {
+    if (!state.swatches.includes(state.color)) {
+      state.swatches.push(state.color);
+      buildSwatches();
+    }
+  };
+  document.getElementById('custom-stamp').oninput = e => {
+    const v = e.target.value.trim();
+    if (v) {
+      state.stamp = v;
+      state.tool = 'stamp';
+      document.querySelectorAll('.tool, .shape, .stamp').forEach(x => x.classList.remove('active'));
+      setStatus('Custom stamp: ' + v);
+    }
+  };
+
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.onclick = () => applyFilter(b.dataset.filter);
+  });
+  document.querySelectorAll('.adjust-btn').forEach(b => {
+    b.onclick = () => {
+      const l = createAdjustLayer(b.dataset.adjust);
+      state.layers.push(l);
+      state.activeId = l.id;
+      refreshLayersUI();
+      recomposite();
+    };
+  });
+
+  const doSearch = () => {
+    const q = document.getElementById('img-search-q').value.trim();
+    if (q) searchImages(q);
+  };
+  document.getElementById('img-search-btn').onclick = doSearch;
+  document.getElementById('img-search-q').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch();
+  });
+
+  document.getElementById('pattern-size').onchange = (e) => {
+    resizePattern(parseInt(e.target.value, 10));
+  };
+  document.getElementById('clear-pattern').onclick = clearPattern;
+  document.getElementById('fill-pattern').onclick = fillLayerWithPattern;
+
+  document.getElementById('host-room').onclick = hostRoom;
+  document.getElementById('show-join').onclick = () => {
+    document.getElementById('collab-join-form').style.display = '';
+    document.getElementById('join-code').focus();
+  };
+  document.getElementById('cancel-join').onclick = () => {
+    document.getElementById('collab-join-form').style.display = 'none';
+  };
+  document.getElementById('do-join').onclick = () => {
+    const code = document.getElementById('join-code').value;
+    joinRoomByCode(code);
+  };
+  document.getElementById('join-code').addEventListener('keydown', e => {
+    if (e.key === 'Enter') joinRoomByCode(e.target.value);
+  });
+  document.getElementById('leave-room').onclick = leaveRoom;
+
+  document.getElementById('undo').onclick = undo;
+  document.getElementById('redo').onclick = redo;
+  document.getElementById('clear-layer').onclick = () => {
+    const target = effectiveMainLayer();
+    if (!target) return;
+    if (!confirm('Clear "' + target.name + '"?')) return;
+    beginStroke(mainTarget);
+    target.ctx.clearRect(0, 0, state.width, state.height);
+    collabPush(mainTarget, 'clear-layer', {});
+    endStroke();
+  };
+  document.getElementById('save').onclick = savePNG;
+  document.getElementById('resize-canvas').onclick = () => {
+    const w = parseInt(document.getElementById('canvas-w').value, 10);
+    const h = parseInt(document.getElementById('canvas-h').value, 10);
+    if (!w || !h) return;
+    resizeCanvas(w, h);
+  };
+  document.getElementById('add-layer').onclick = () => {
+    const l = createDrawLayer();
+    state.layers.push(l);
+    state.activeId = l.id;
+    refreshLayersUI();
+    recomposite();
+  };
+  document.getElementById('dup-layer').onclick = () => {
+    const l = activeLayer(); if (!l) return;
+    let nl;
+    if (l.type === 'draw') {
+      nl = createDrawLayer(l.name + ' copy');
+      nl.ctx.drawImage(l.canvas, 0, 0);
+    } else {
+      nl = createAdjustLayer(l.adjustKind);
+      nl.adjustValue = l.adjustValue;
+      nl.name = l.name + ' copy';
+    }
+    const idx = state.layers.findIndex(x => x.id === l.id);
+    state.layers.splice(idx + 1, 0, nl);
+    state.activeId = nl.id;
+    refreshLayersUI();
+    recomposite();
+  };
+  document.getElementById('layer-up').onclick = () => moveLayer(1);
+  document.getElementById('layer-down').onclick = () => moveLayer(-1);
+
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
+    else if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); redo(); }
+    else if (e.key === '[') { state.size = Math.max(1, state.size - 2); document.getElementById('size').value = state.size; document.getElementById('size-val').textContent = state.size; updateSizePreview(); }
+    else if (e.key === ']') { state.size = Math.min(120, state.size + 2); document.getElementById('size').value = state.size; document.getElementById('size-val').textContent = state.size; updateSizePreview(); }
+    else if (e.key.toLowerCase() === 'b') setTool('pen');
+    else if (e.key.toLowerCase() === 'e') setTool('eraser');
+    else if (e.key.toLowerCase() === 'g') setTool('fill');
+    else if (e.key.toLowerCase() === 'i') setTool('eyedrop');
+  });
+}
+
+function moveLayer(dir) {
+  const idx = state.layers.findIndex(l => l.id === state.activeId);
+  if (idx < 0) return;
+  const ni = idx + dir;
+  if (ni < 0 || ni >= state.layers.length) return;
+  const [l] = state.layers.splice(idx, 1);
+  state.layers.splice(ni, 0, l);
+  refreshLayersUI();
+  recomposite();
+}
+
+function resizeCanvas(w, h) {
+  state.width = w; state.height = h;
+  state.layers.forEach(l => {
+    if (l.type !== 'draw') return;
+    const data = l.ctx.getImageData(0, 0, l.canvas.width, l.canvas.height);
+    l.canvas.width = w; l.canvas.height = h;
+    l.ctx.lineCap = 'round'; l.ctx.lineJoin = 'round';
+    l.ctx.putImageData(data, 0, 0);
+  });
+  state.undoStack.length = 0;
+  state.redoStack.length = 0;
+  rebuildStack();
+}
+
+function savePNG() {
+  const merged = document.createElement('canvas');
+  merged.width = state.width; merged.height = state.height;
+  const mctx = merged.getContext('2d');
+  mctx.fillStyle = '#ffffff';
+  mctx.fillRect(0, 0, state.width, state.height);
+  mctx.drawImage(state.outputCanvas, 0, 0);
+  const link = document.createElement('a');
+  link.download = 'drawing.png';
+  link.href = merged.toDataURL('image/png');
+  link.click();
+}
+
+init();
+</script>
+</body>
+</html>
