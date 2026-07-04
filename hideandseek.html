@@ -736,8 +736,8 @@ const LEVELS = {
     palette: ['#d94f3a','#f2e3c6','#e8b26a','#6b3f23','#ffd24a','#ff9fd0','#7ec850','#e8e2d2'] },
   backyard: { label: 'BACKYARD WILDS', sky: 0xa8d8ff, fog: [0xa8d8ff, 32, 95],
     palette: ['#3f7d2e','#6b4a2b','#8a8f98','#2e6b4f','#59a84a','#7a9b5c','#4d3a26'] },
-  breakfast: { label: 'BREAKFAST', sky: 0xffe9c9, fog: [0xffe9c9, 34, 98],
-    palette: ['#d9a05a','#f5e08a','#fbfaf0','#f5b731','#a2432a','#caa15e','#3a241a','#ffa733'] },
+  breakfast: { label: 'BREAKFAST', sky: 0xffe9c9, fog: [0xffe9c9, 40, 110],
+    palette: ['#571c03','#8a5a2e','#c9a05a','#e8d8b0','#f0eef0','#a2432a','#3a241a','#f5b731'] },
 };
 
 function mat(c, r){ return new THREE.MeshStandardMaterial({ color: c, roughness: r === undefined ? 0.9 : r }); }
@@ -903,113 +903,57 @@ function buildBackyard(){
   }
 }
 
-// BREAKFAST — tiny players on a giant breakfast table (table.glb) among the food.
-// The visible/walkable surface is a gingham cloth at y=0; the GLB is pure set-dressing
-// beneath & around it, so physics stays cheap and doesn't depend on the model's geometry.
-function addBreakfastTable(){
-  const TOP_HALF = 30;                         // tabletop reaches past the cloth so its rim frames the arena
-  if (tableProto){
-    const t = tableProto.clone(true);
-    t.updateMatrixWorld(true);
-    let b = new THREE.Box3().setFromObject(t);
-    const sz = b.getSize(new THREE.Vector3());
-    const span = Math.min(sz.x, sz.z) || 1;    // cover the whole arena on the shorter axis
-    t.scale.multiplyScalar((TOP_HALF*2) / span);
-    t.updateMatrixWorld(true);
-    b = new THREE.Box3().setFromObject(t);
-    const c = b.getCenter(new THREE.Vector3());
-    t.position.x -= c.x; t.position.z -= c.z;
-    t.position.y -= b.max.y + 0.04;            // tabletop just under the cloth (no z-fight)
-    t.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; o.userData.noWalk = true; } });
-    levelGroup.add(t);
-  } else {
-    // procedural fallback so BREAKFAST still works if table.glb is missing
-    const top = put(new THREE.Mesh(new THREE.BoxGeometry(TOP_HALF*2, 1.4, TOP_HALF*2), mat(0x9a6636, 0.75)), 0, -0.74, 0);
-    top.userData.noWalk = true;
-    const lm = mat(0x6b4423, 0.8), lo = TOP_HALF - 4;
-    for (const s of [[-lo,-lo],[lo,-lo],[-lo,lo],[lo,lo]]){
-      put(new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 18, 12), lm), s[0], -9.4, s[1]).userData.noWalk = true;
-    }
-  }
-}
-
+// BREAKFAST — tiny players on the giant table inside table.glb, hiding among its food.
+// The GLB's own brown tabletop is the floor; its food/props are the obstacles. We scale
+// the model so the tabletop fits the play circle, drop that surface to y=0, and derive
+// colliders straight from the standing items (used for horn line-of-sight & bot spots).
 function buildBreakfast(){
-  addBreakfastTable();
-
-  // the surface you actually stand on: a gingham breakfast cloth
-  const cloth = new THREE.Mesh(new THREE.CircleGeometry(26, 48),
-    new THREE.MeshStandardMaterial({ map: checkerTex('#f2e7cf','#e2c58f'), roughness: 0.95 }));
-  cloth.rotation.x = -Math.PI/2; cloth.receiveShadow = true; levelGroup.add(cloth);
-
-  // pancake stack + syrup pool + butter pat
-  const px = 6, pz = -3;
-  for (let i = 0; i < 4; i++)
-    put(new THREE.Mesh(new THREE.CylinderGeometry(3.3 - i*0.12, 3.3 - i*0.12, 0.7, 26), mat(0xd9a05a, 0.85)), px, 0.35 + i*0.72, pz);
-  put(new THREE.Mesh(new THREE.CylinderGeometry(3.15, 3.15, 0.16, 26), mat(0x7a3b18, 0.6)), px, 3.2, pz);
-  put(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 1.5), mat(0xf5e08a, 0.7)), px, 3.5, pz);
-  col(px, pz, 3.4);
-
-  // fried egg — flat white with a domed yolk (low enough to stand on)
-  const egg = put(new THREE.Mesh(new THREE.CylinderGeometry(3.6, 3.9, 0.3, 30), mat(0xfbfaf0, 0.8)), -7, 0.15, 4);
-  egg.scale.set(1.15, 1, 0.9);
-  put(new THREE.Mesh(new THREE.SphereGeometry(1.25, 22, 14), mat(0xf5b731, 0.55)), -7, 0.55, 4).scale.y = 0.6;
-  col(-7, 4, 3.0);
-
-  // bacon strips
-  for (let i = 0; i < 3; i++){
-    const b = put(new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.35, 1.2), mat(0xa2432a, 0.7)), 8 + i*0.25, 0.2, 6 + i*1.4);
-    b.rotation.y = 0.35 + i*0.12; b.rotation.z = 0.05;
+  if (!tableProto){
+    // safety only — table.glb missing: a flat brown surface so the level still loads
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(24, 40), mat(0x5a3a1e, 0.9));
+    disc.rotation.x = -Math.PI/2; disc.receiveShadow = true; levelGroup.add(disc);
+    return;
   }
-  col(8, 7, 2.4);
+  const t = tableProto.clone(true);
+  levelGroup.add(t);
+  t.updateMatrixWorld(true);
 
-  // coffee mug + handle + coffee surface
-  put(new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.1, 4.6, 26), mat(0xf0eef0, 0.5)), -9, 2.3, -6);
-  put(new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.0, 0.2, 26), mat(0x3a241a, 0.4)), -9, 4.5, -6);
-  put(new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.34, 12, 20), mat(0xf0eef0, 0.5)), -6.5, 2.6, -6);
-  col(-9, -6, 2.6);
+  // locate the brown tabletop (the widest near-flat mesh; 'Plane.004' in this model)
+  let topMesh = null, bestFp = -1;
+  t.traverse(o => {
+    if (!o.isMesh) return;
+    if (norm(o.name) === norm('Plane.004')) { topMesh = o; bestFp = 1e9; return; }
+    const s = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+    const fp = s.x * s.z;
+    if (s.y < Math.max(s.x, s.z) * 0.4 && fp > bestFp){ bestFp = fp; topMesh = o; }
+  });
+  if (!topMesh) topMesh = t;
 
-  // upright toast slices
-  for (let i = 0; i < 2; i++){
-    const s = put(new THREE.Mesh(new THREE.BoxGeometry(2.8, 3.0, 0.55), mat(0xcaa15e, 0.85)), 3 + i*1.7, 1.5, 9.5);
-    s.rotation.z = 0.12 - i*0.06; s.rotation.y = 0.2;
-  }
-  col(3.8, 9.5, 2.2);
+  // scale so the tabletop's short side covers the play circle, then centre & drop it to y=0
+  let box = new THREE.Box3().setFromObject(topMesh);
+  let size = box.getSize(new THREE.Vector3());
+  const S = (BOUND_R + 3) / (Math.min(size.x, size.z) / 2 || 1);
+  t.scale.setScalar(S);
+  t.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(topMesh);
+  const c = box.getCenter(new THREE.Vector3());
+  t.position.x -= c.x; t.position.z -= c.z; t.position.y -= box.max.y;
+  t.updateMatrixWorld(true);
 
-  // cereal bowl — milk pool + floating Os
-  const bx = 11, bz = -4;
-  put(new THREE.Mesh(new THREE.SphereGeometry(3.5, 26, 16, 0, Math.PI*2, Math.PI*0.5, Math.PI*0.5),
-    new THREE.MeshStandardMaterial({ color: 0xdfe8f0, roughness: 0.4, side: THREE.DoubleSide })), bx, 2.3, bz);
-  put(new THREE.Mesh(new THREE.CylinderGeometry(3.05, 3.05, 0.12, 26), mat(0xf8f6ef, 0.5)), bx, 1.95, bz);
-  for (let i = 0; i < 6; i++){
-    const a = i/6*Math.PI*2;
-    put(new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.22, 10, 14), mat(0xd9a441, 0.7)),
-      bx + Math.cos(a)*1.6, 2.05, bz + Math.sin(a)*1.6).rotation.x = Math.PI/2;
-  }
-  col(bx, bz, 3.5);
-
-  // orange juice glass (translucent)
-  put(new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.6, 5, 24),
-    new THREE.MeshStandardMaterial({ color: 0xffa733, roughness: 0.2, transparent: true, opacity: 0.85 })), -2, 2.5, -11);
-  col(-2, -11, 2.0);
-
-  // waffle with a lattice
-  const wx = -12, wz = 2;
-  put(new THREE.Mesh(new THREE.BoxGeometry(5, 0.6, 5), mat(0xd9a441, 0.85)), wx, 0.3, wz);
-  for (let i = -1; i <= 1; i++){
-    put(new THREE.Mesh(new THREE.BoxGeometry(5, 0.3, 0.4), mat(0xb07f2e, 0.8)), wx, 0.62, wz + i*1.4);
-    put(new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 5), mat(0xb07f2e, 0.8)), wx + i*1.4, 0.62, wz);
-  }
-  col(wx, wz, 3.0);
-
-  // butter stick
-  put(new THREE.Mesh(new THREE.BoxGeometry(3, 0.9, 1.4), mat(0xf5e08a, 0.6)), 2, 0.45, -6);
-  col(2, -6, 1.7);
-
-  // jam jar
-  put(new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 2.2, 20),
-    new THREE.MeshStandardMaterial({ color: 0xb0243a, roughness: 0.35, transparent: true, opacity: 0.9 })), 13, 1.1, 3);
-  put(new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 0.4, 20), mat(0xcda15a, 0.5)), 13, 2.35, 3);
-  col(13, 3, 1.9);
+  // shadows; turn standing items into colliders; keep only real walk surfaces in the raycast set
+  t.traverse(o => {
+    if (!o.isMesh) return;
+    o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
+    const b = new THREE.Box3().setFromObject(o);
+    const s = b.getSize(new THREE.Vector3());
+    const horiz = Math.max(s.x, s.z);
+    if (b.max.y < -0.4) o.userData.noWalk = true;                 // legs/underside
+    else if (o !== topMesh && horiz < 1.5) o.userData.noWalk = true;  // tiny detail — can't stand on it
+    if (b.max.y > 0.9 && b.max.y < 40){                          // an item standing on the table
+      const r = horiz / 2;
+      if (r > 0.4 && r < 9) col((b.min.x + b.max.x)/2, (b.min.z + b.max.z)/2, r * 0.8);
+    }
+  });
 }
 
 const HIDER_SPAWNS = [[-14,-10],[14,-11],[-15,9],[15,10],[0,15],[-8,14],[8,15],[0,-15]];
@@ -1814,9 +1758,10 @@ function startSolo(){
   for (const p of G.players){
     if (p.role !== 'hider') continue;
     const c = chars[p.id];
-    const spot = colliders[(bi*2 + 1) % colliders.length];
+    const spot = colliders.length ? colliders[(bi*2 + 1) % colliders.length] : null;
     const a = Math.random()*Math.PI*2;
-    c.pos.set(spot.x + Math.cos(a)*(spot.r+0.6), 0, spot.z + Math.sin(a)*(spot.r+0.6));
+    if (spot) c.pos.set(spot.x + Math.cos(a)*(spot.r+0.6), 0, spot.z + Math.sin(a)*(spot.r+0.6));
+    else c.pos.set(Math.cos(a)*11, 0, Math.sin(a)*11);
     collide(c);
     c.yaw = Math.random()*Math.PI*2;
     const pose = HIDE_POSES[1 + (bi % (HIDE_POSES.length-1))];
