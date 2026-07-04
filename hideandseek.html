@@ -120,8 +120,9 @@
     </div>
     <button class="bigbtn" id="solobtn">SOLO TEST (VS BOTS)</button>
     <div class="err" id="homeerr"></div>
-    <p class="muted">Host is the <b>seeker</b> — everyone who joins is a <b>hider</b>. Hiders pose, paint themselves
-    to blend into the level, and confirm. The seeker then hunts them down with an air horn.</p>
+    <p class="muted">The host seeks first — everyone who joins is a <b>hider</b>. Hiders pose, paint themselves
+    to blend into the level, and confirm. The seeker hunts them down with a directional air horn.
+    After each round, the <b>first hider found</b> becomes the next seeker.</p>
   </div>
 </div>
 
@@ -180,6 +181,15 @@
     <div class="row"><span>RADIUS</span><span id="pradv">0.14</span></div>
     <input type="range" id="prad" min="0.03" max="0.5" step="0.01" value="0.14">
     <button class="sm" id="preset">RESET COLORS</button>
+    <h3 style="margin-top:12px">AESTHETICS</h3>
+    <div class="row"><span>REFLECTIVITY</span><span id="metv">0.00</span></div>
+    <input type="range" id="met" min="0" max="1" step="0.05" value="0">
+    <div class="row"><span>ROUGHNESS</span><span id="rouv">0.90</span></div>
+    <input type="range" id="rou" min="0" max="1" step="0.05" value="0.9">
+    <div class="row"><span>AMBIENT COLOR</span><input type="color" id="ambc" value="#ffffff"></div>
+    <div class="row"><span>EMISSION</span><input type="color" id="emic" value="#000000"></div>
+    <div class="row"><span>GLOW STRENGTH</span><span id="glov">0.0</span></div>
+    <input type="range" id="glo" min="0" max="2" step="0.05" value="0">
     <div class="row" style="margin-top:6px;color:#55627a">left-drag paints · right-drag orbits</div>
   </div>
 </div>
@@ -188,6 +198,7 @@
 <script src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://unpkg.com/three@0.128.0/examples/js/utils/SkeletonUtils.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 'use strict';
@@ -196,10 +207,12 @@
 //  CONFIG
 // ============================================================
 const WALK_SPEED = 3.6;
-const JUMP_V = 4.8, GRAVITY = 13;
+const JUMP_V = 6.6, GRAVITY = 14;   // beefy jump — enough to hop onto scenery
+const STEP_UP = 0.55;               // tallest ledge you can walk straight up
+const MAX_SLOPE = 55;               // degrees — anything steeper is a wall
 const BOUND_R = 19;                 // playable radius
 const HIDE_TIME = 90;               // seconds to hide
-const HORN_RANGE = 2.8;             // tag radius
+const HORN_LEN = 7.5;               // directional air-horn beam length
 const HORN_CD = 2.5, WHISTLE_CD = 4;
 const NET_HZ = 10;
 const PEER_PREFIX = 'rigman-hsp-';
@@ -232,8 +245,9 @@ controls.maxDistance = 16;
 controls.maxPolarAngle = Math.PI * 0.49;
 controls.target.set(0, 1.1, 0);
 
-scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x3a4232, 0.9));
-const sun = new THREE.DirectionalLight(0xfff2dd, 1.9);
+scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x3a4232, 0.75));
+scene.add(new THREE.AmbientLight(0xffffff, 0.38));            // soft fill so shading isn't harsh
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.45);
 sun.position.set(14, 24, 10);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -310,6 +324,17 @@ function onModel(gltf){
     if (o.isBone) idx[norm(o.name)] = o;
   });
   for (const nm of NEEDED){ const b = idx[norm(nm)]; if (b) mBones[nm] = b; }
+
+  // weld duplicate verts and rebuild smooth normals so the person isn't faceted
+  if (masterMesh){
+    try {
+      let geo = masterMesh.geometry;
+      geo.deleteAttribute('normal');                       // split-by-normal verts can merge again
+      geo = THREE.BufferGeometryUtils.mergeVertices(geo, 1e-4);
+      geo.computeVertexNormals();
+      masterMesh.geometry = geo;
+    } catch(err){ masterMesh.geometry.computeVertexNormals(); }
+  }
 
   scene.updateMatrixWorld(true);
   let box = new THREE.Box3().setFromObject(masterModel);
@@ -592,7 +617,10 @@ class Character {
     this.prev = this.anim; this.anim = name; this.blend = 0;
   }
   update(dt){
-    for (const k in this.phases) this.phases[k] += dt * (k === 'walk' ? 1.35 : 1);
+    // a locked hiding pose is a statue: freeze the sway/breathing clock.
+    // (the idle-sway code itself is untouched — unposed characters still use it)
+    if (!this.posed)
+      for (const k in this.phases) this.phases[k] += dt * (k === 'walk' ? 1.35 : 1);
     if (this.blend < 1) this.blend = Math.min(1, this.blend + dt / BLEND_TIME);
     const k = smooth(this.blend);
     const blending = this.prev && this.blend < 1;
@@ -665,6 +693,14 @@ class Character {
     for (let i = 0; i < arr.length; i += 3){ arr[i]=BASE_COL.r; arr[i+1]=BASE_COL.g; arr[i+2]=BASE_COL.b; }
     this.colorAttr.needsUpdate = true;
   }
+  setMat(o){          // aesthetics: reflectivity / roughness / ambient tint / emission
+    if (!this.mesh) return;
+    const m = this.mesh.material;
+    m.metalness = o.m; m.roughness = o.r;
+    m.color.set(o.a);
+    m.emissive.set(o.e); m.emissiveIntensity = o.g;
+    m.needsUpdate = true;
+  }
   setFound(){
     this.found = true; this.posed = null;
     if (this.mesh){ this.mesh.material.transparent = true; this.mesh.material.opacity = 0.35; }
@@ -683,6 +719,7 @@ class Character {
 //  LEVELS
 // ============================================================
 let levelGroup = null, colliders = [], levelName = 'picnic';
+let walkMeshes = [];     // meshes you can stand on / climb (slope-limited)
 const LEVELS = {
   picnic: { label: 'PICNIC PANIC', sky: 0xffd9a8, fog: [0xffd9a8, 30, 90],
     palette: ['#d94f3a','#f2e3c6','#e8b26a','#6b3f23','#ffd24a','#ff9fd0','#7ec850','#e8e2d2'] },
@@ -719,6 +756,9 @@ function buildLevel(name){
     const p = put(new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.6, 0.25), pm), Math.cos(a)*(BOUND_R+0.8), 0.8, Math.sin(a)*(BOUND_R+0.8));
     p.rotation.y = -a;
   }
+  levelGroup.updateMatrixWorld(true);
+  walkMeshes = [];
+  levelGroup.traverse(o => { if (o.isMesh && !o.userData.noWalk) walkMeshes.push(o); });
 }
 
 function buildPicnic(){
@@ -820,7 +860,7 @@ function buildBackyard(){
   // pond (visual only — walkable "shallow" edge look)
   const pond = new THREE.Mesh(new THREE.CircleGeometry(3.4, 28),
     new THREE.MeshStandardMaterial({ color: 0x3a7ba8, roughness: 0.25, metalness: 0.1 }));
-  pond.rotation.x = -Math.PI/2; pond.position.set(9, 0.02, -10); levelGroup.add(pond);
+  pond.rotation.x = -Math.PI/2; pond.position.set(9, 0.02, -10); pond.userData.noWalk = true; levelGroup.add(pond);
 
   // dog house
   const dh = put(new THREE.Mesh(new THREE.BoxGeometry(3, 2.2, 2.6), mat(0xa3502e)), -12, 1.1, 8);
@@ -835,12 +875,14 @@ function buildBackyard(){
     const x = Math.cos(a)*r, z = Math.sin(a)*r;
     const t = put(new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.5 + Math.random(), 5), mat(0x59a84a)), x, 0.8, z);
     t.rotation.y = Math.random()*3;
+    t.userData.noWalk = true;                 // walk THROUGH grass, not on top of it
   }
   // flowers
   for (let i = 0; i < 14; i++){
     const a = Math.random()*Math.PI*2, r = 3 + Math.random()*14;
-    put(new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), mat([0xff6b9a, 0xffd24a, 0xff8a5f][i%3], 0.6)),
+    const f = put(new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), mat([0xff6b9a, 0xffd24a, 0xff8a5f][i%3], 0.6)),
       Math.cos(a)*r, 0.55, Math.sin(a)*r);
+    f.userData.noWalk = true;
   }
 }
 
@@ -927,7 +969,7 @@ function hostOnData(m, conn){
   applyMsg(m);
   hostAuthority(m);
   // relay gameplay traffic to the other guests
-  if (['st','pose','unpose','stroke','rescol','whistle','horn'].includes(m.t)) bcast(m, conn);
+  if (['st','pose','unpose','stroke','rescol','whistle','horn','mat'].includes(m.t)) bcast(m, conn);
 }
 
 function hostDropGuest(conn){
@@ -957,18 +999,36 @@ function hostAuthority(m){
     if (G.phase === 'hide'){ bcast({ t: 'hstat', id: m.id, s: 'hiding' }); applyMsg({ t: 'hstat', id: m.id, s: 'hiding' }); }
   }
   if (m.t === 'horn' && G.phase === 'seek'){
+    // directional beam: inside the widening cone, and not ducked behind scenery
+    const bx = m.dx || 0, bz = m.dz || 1;
     for (const p of G.players){
       if (p.role !== 'hider') continue;
       const c = chars[p.id];
       if (!c || c.found) continue;
-      const dx = c.pos.x - m.x, dz = c.pos.z - m.z;
-      if (dx*dx + dz*dz <= HORN_RANGE*HORN_RANGE){
-        const fm = { t: 'found', id: p.id, ms: Date.now() - G.seekStart };
-        bcast(fm); applyMsg(fm);
-      }
+      const px = c.pos.x - m.x, pz = c.pos.z - m.z;
+      const t = px*bx + pz*bz;
+      if (t < 0 || t > HORN_LEN) continue;                       // out of the beam
+      const perp = Math.hypot(px - bx*t, pz - bz*t);
+      if (perp > 0.7 + (t/HORN_LEN)*1.6) continue;               // cone widens with distance
+      if (c.pos.y < 1.2 && hornBlocked(m.x, m.z, c.pos.x, c.pos.z)) continue;  // hidden behind scenery
+      const fm = { t: 'found', id: p.id, ms: Date.now() - G.seekStart };
+      bcast(fm); applyMsg(fm);
     }
     hostCheckProgress();
   }
+}
+// does the seeker→hider line pass through a scenery collider?
+function hornBlocked(x0, z0, x1, z1){
+  const dx = x1 - x0, dz = z1 - z0, L2 = dx*dx + dz*dz;
+  if (L2 < 1e-6) return false;
+  for (const o of colliders){
+    let t = ((o.x - x0)*dx + (o.z - z0)*dz) / L2;
+    if (t < 0.05 || t > 0.95) continue;
+    const cx = x0 + dx*t - o.x, cz = z0 + dz*t - o.z;
+    const rr = o.r * 0.6;
+    if (cx*cx + cz*cz < rr*rr) return true;
+  }
+  return false;
 }
 function hostCheckProgress(){
   const hiders = G.players.filter(p => p.role === 'hider');
@@ -1059,6 +1119,11 @@ function applyMsg(m){
       if (c && m.id !== myId) c.resetColors();
       break;
     }
+    case 'mat': {
+      const c = chars[m.id];
+      if (c && m.id !== myId) c.setMat({ m: m.m, r: m.r, a: m.a, e: m.e, g: m.g });
+      break;
+    }
     case 'whistle': {
       const my = me();
       if (my){
@@ -1074,7 +1139,7 @@ function applyMsg(m){
       const my = me();
       const d = my ? Math.hypot(my.pos.x - m.x, my.pos.z - m.z) : 10;
       sndHorn(Math.max(0.15, Math.min(0.9, 1 - d/45)), panTo(m.x, m.z));
-      spawnRing(m.x, m.z);
+      spawnBlast(m.x, m.z, m.dx || 0, m.dz || 1);
       break;
     }
     case 'hstat': setStatus(m.id, m.s); refreshRoster(); refreshSeekerWait(); break;
@@ -1093,7 +1158,7 @@ function applyMsg(m){
       break;
     }
     case 'over': showOver(m.stats); break;
-    case 'tolobby': backToLobby(); break;
+    case 'tolobby': backToLobby(m); break;
     case 'left': {
       G.players = G.players.filter(p => p.id !== m.id);
       if (chars[m.id]){ chars[m.id].dispose(); delete chars[m.id]; }
@@ -1206,7 +1271,12 @@ function showOver(stats){
   $('overwait').textContent = isHost ? '' : 'waiting for the host…';
 }
 
-function backToLobby(){
+function backToLobby(m){
+  if (m && m.players){
+    G.players = m.players;                     // roles may have rotated (first found seeks next)
+    const sk = G.players.find(p => p.role === 'seeker');
+    if (sk) $('lobbyerr').textContent = sk.name + ' was found first — they are the SEEKER next round!';
+  }
   for (const id in chars){ chars[id].dispose(); delete chars[id]; }
   G.phase = 'lobby';
   G.foundOrder = []; confirmedIds.clear();
@@ -1254,7 +1324,7 @@ function setupHudForPhase(){
   } else if (G.phase === 'seek'){
     $('phaselbl').textContent = 'SEEK PHASE';
     $('rolehint').textContent = role === 'seeker'
-      ? 'find the painted hiders! E = air horn tag (' + HORN_RANGE + 'm)'
+      ? 'find the painted hiders! E blasts the air horn where you aim'
       : 'stay still… or Q whistle to taunt. you may relocate & re-pose!';
     if (role === 'seeker') showPaintbox(false);
     refreshSeekerWait();
@@ -1298,21 +1368,28 @@ function toast(txt){
   setTimeout(() => d.remove(), 4200);
 }
 
-// horn blast ring
-const rings = [];
-function spawnRing(x, z){
-  const r = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.55, 40),
-    new THREE.MeshBasicMaterial({ color: 0xffb26b, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
-  r.rotation.x = -Math.PI/2; r.position.set(x, 0.06, z);
-  scene.add(r); rings.push({ m: r, t: 0 });
+// directional horn blast — orange cone flaring out from the seeker
+const fx = [];
+function spawnBlast(x, z, dx, dz){
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(2.2, HORN_LEN, 20, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffb26b, transparent: true, opacity: 0.55,
+      side: THREE.DoubleSide, depthWrite: false }));
+  cone.rotation.x = -Math.PI/2;             // apex at the seeker, base far away
+  cone.position.z = HORN_LEN/2;
+  const g = new THREE.Group();
+  g.add(cone);
+  g.position.set(x, 1.1, z);
+  g.rotation.y = Math.atan2(dx, dz);
+  scene.add(g);
+  fx.push({ g, cone, t: 0 });
 }
-function updateRings(dt){
-  for (let i = rings.length-1; i >= 0; i--){
-    const R = rings[i]; R.t += dt;
-    const s = 1 + R.t*9;
-    R.m.scale.set(s, s, 1);
-    R.m.material.opacity = Math.max(0, 0.9 - R.t*1.4);
-    if (R.t > 0.7){ scene.remove(R.m); R.m.geometry.dispose(); R.m.material.dispose(); rings.splice(i,1); }
+function updateFx(dt){
+  for (let i = fx.length-1; i >= 0; i--){
+    const F = fx[i]; F.t += dt;
+    F.cone.material.opacity = Math.max(0, 0.55 - F.t*1.1);
+    const s = 1 + F.t*0.5;
+    F.g.scale.set(s, 1, 1 + F.t*0.15);
+    if (F.t > 0.55){ scene.remove(F.g); F.cone.geometry.dispose(); F.cone.material.dispose(); fx.splice(i,1); }
   }
 }
 
@@ -1353,7 +1430,12 @@ function doHorn(){
   const now = performance.now()/1000;
   if (now - lastHorn < HORN_CD) return;
   lastHorn = now;
-  act({ t: 'horn', x: my.pos.x, z: my.pos.z });
+  // blast where the camera is aiming (horizontal)
+  const d = camera.getWorldDirection(new THREE.Vector3());
+  let dx = d.x, dz = d.z;
+  const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
+  my.yaw = Math.atan2(dx, dz);                            // face the blast
+  act({ t: 'horn', x: my.pos.x, z: my.pos.z, dx: +dx.toFixed(3), dz: +dz.toFixed(3) });
 }
 
 function canMove(){
@@ -1365,7 +1447,7 @@ function canMove(){
 function lockPose(pose){
   const my = me(); if (!my || my.found) return;
   if (G.phase !== 'hide' && G.phase !== 'seek') return;
-  if (my.pos.y > 0.02) return;                       // land first
+  if (my.airborne) return;                           // land first (posing on top of scenery is allowed)
   my.posed = pose;
   my.setAnim(pose);
   act({ t: 'pose', pose, x: my.pos.x, z: my.pos.z, yaw: my.yaw });
@@ -1409,19 +1491,26 @@ function updateLocal(dt){
     if (moving){
       const az = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
       mvDir.normalize().applyAxisAngle(Y_AXIS, az);
-      my.pos.x += mvDir.x * WALK_SPEED * dt;
-      my.pos.z += mvDir.z * WALK_SPEED * dt;
+      const sx = mvDir.x * WALK_SPEED * dt, sz = mvDir.z * WALK_SPEED * dt;
+      if (!tryMove(my, sx, sz)){ if (!tryMove(my, sx, 0)) tryMove(my, 0, sz); }   // slide along walls
       let ty = Math.atan2(mvDir.x, mvDir.z), dyaw = ty - my.yaw;
       while (dyaw >  Math.PI) dyaw -= 2*Math.PI;
       while (dyaw < -Math.PI) dyaw += 2*Math.PI;
       my.yaw += dyaw * Math.min(1, dt*11);
       collide(my);
     }
-    if ((keys['Space']) && my.pos.y <= 0.001 && !my.airborne){ my.vy = JUMP_V; my.airborne = true; sndPop(); }
-    if (my.airborne || my.pos.y > 0){
+    // vertical: jump, land on scenery, climb steps, fall off ledges
+    const gr = groundAt(my.pos.x, my.pos.z);
+    if (keys['Space'] && !my.airborne){ my.vy = JUMP_V; my.airborne = true; sndPop(); }
+    if (my.airborne){
       my.vy -= GRAVITY * dt;
-      my.pos.y = Math.max(0, my.pos.y + my.vy * dt);
-      if (my.pos.y === 0){ my.airborne = false; my.vy = 0; }
+      my.pos.y += my.vy * dt;
+      if (my.vy <= 0 && my.pos.y <= gr.y){ my.pos.y = gr.y; my.airborne = false; my.vy = 0; }
+    } else if (my.pos.y < gr.y - 0.005){
+      my.pos.y = Math.min(gr.y, my.pos.y + 7*dt);          // smooth step up
+    } else if (my.pos.y > gr.y + 0.005){
+      if (my.pos.y - gr.y <= STEP_UP) my.pos.y = gr.y;     // step down small ledges
+      else { my.airborne = true; my.vy = 0; }              // walked off — fall
     }
     my.setAnim(moving ? 'walk' : 'idle');
   }
@@ -1433,17 +1522,36 @@ function updateLocal(dt){
 }
 
 function collide(c){
-  for (const o of colliders){
-    const dx = c.pos.x - o.x, dz = c.pos.z - o.z;
-    const d2 = dx*dx + dz*dz, min = o.r + 0.35;
-    if (d2 < min*min && d2 > 1e-9){
-      const d = Math.sqrt(d2);
-      c.pos.x = o.x + dx/d*min;
-      c.pos.z = o.z + dz/d*min;
-    }
-  }
+  // world bounds only — scenery blocking/climbing is handled by the slope logic
   const rr = Math.hypot(c.pos.x, c.pos.z);
   if (rr > BOUND_R){ c.pos.x *= BOUND_R/rr; c.pos.z *= BOUND_R/rr; }
+}
+
+// ---- climbable ground: raycast down onto the level meshes ----
+const _gcast = new THREE.Raycaster();
+const _gorg = new THREE.Vector3(), _gdn = new THREE.Vector3(0,-1,0);
+function groundAt(x, z){
+  _gorg.set(x, 40, z);
+  _gcast.set(_gorg, _gdn);
+  const hits = _gcast.intersectObjects(walkMeshes, false);
+  if (!hits.length) return { y: 0, slope: 0 };
+  const h = hits[0];
+  let slope = 0;
+  if (h.face){
+    const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+    slope = Math.acos(Math.min(1, Math.abs(n.y))) * 180/Math.PI;
+  }
+  return { y: h.point.y, slope };
+}
+function tryMove(c, dx, dz){
+  const nx = c.pos.x + dx, nz = c.pos.z + dz;
+  const g = groundAt(nx, nz);
+  const rise = g.y - c.pos.y;
+  const maxRise = c.airborne ? 0.2 : STEP_UP;
+  if (rise > maxRise) return false;                       // ledge is too tall — jump it
+  if (rise > 0.05 && g.slope > MAX_SLOPE) return false;   // too steep to climb
+  c.pos.x = nx; c.pos.z = nz;
+  return true;
 }
 
 // periodic state broadcast
@@ -1530,6 +1638,22 @@ $('pcol').addEventListener('input', e => brushColor = e.target.value);
 $('prad').addEventListener('input', e => { brushR = parseFloat(e.target.value); $('pradv').textContent = brushR.toFixed(2); });
 $('preset').addEventListener('click', () => { const my = me(); if (my){ my.resetColors(); act({ t: 'rescol' }); } });
 
+// ---- aesthetics: material controls for your own mesh, synced to everyone ----
+const matState = { m: 0, r: 0.9, a: '#ffffff', e: '#000000', g: 0 };
+let matTimer = null;
+function pushMat(){
+  const my = me(); if (!my) return;
+  my.setMat(matState);
+  clearTimeout(matTimer);   // debounce the network send while sliders drag
+  matTimer = setTimeout(() => act({ t: 'mat', m: matState.m, r: matState.r,
+    a: matState.a, e: matState.e, g: matState.g }), 150);
+}
+$('met').addEventListener('input', e => { matState.m = parseFloat(e.target.value); $('metv').textContent = matState.m.toFixed(2); pushMat(); });
+$('rou').addEventListener('input', e => { matState.r = parseFloat(e.target.value); $('rouv').textContent = matState.r.toFixed(2); pushMat(); });
+$('ambc').addEventListener('input', e => { matState.a = e.target.value; pushMat(); });
+$('emic').addEventListener('input', e => { matState.e = e.target.value; pushMat(); });
+$('glo').addEventListener('input', e => { matState.g = parseFloat(e.target.value); $('glov').textContent = matState.g.toFixed(1); pushMat(); });
+
 // ============================================================
 //  SOLO TEST MODE — you seek 3 painted bots
 // ============================================================
@@ -1593,7 +1717,12 @@ $('solobtn').addEventListener('click', () => { audio(); startSolo(); });
 $('startbtn').addEventListener('click', hostStart);
 $('againbtn').addEventListener('click', () => {
   if (solo){ location.reload(); return; }
-  const m = { t: 'tolobby' }; bcast(m); applyMsg(m);
+  // the FIRST hider found becomes the next round's seeker
+  let ns = G.foundOrder.length ? G.foundOrder[0].id : null;
+  if (!ns || !G.players.find(p => p.id === ns))
+    ns = (G.players.find(p => p.role === 'seeker') || G.players[0]).id;
+  G.players.forEach(p => p.role = (p.id === ns ? 'seeker' : 'hider'));
+  const m = { t: 'tolobby', players: G.players }; bcast(m); applyMsg(m);
 });
 $('lvl-picnic').addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel('picnic', true); });
 $('lvl-backyard').addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel('backyard', true); });
@@ -1617,7 +1746,7 @@ function animate(){
     for (const id in chars) chars[id].update(dt);
     netTick(dt);
     updateBots(dt);
-    updateRings(dt);
+    updateFx(dt);
     // hide-phase countdown (host enforces; everyone displays)
     if (G.phase === 'hide'){
       const left = Math.max(0, (G.hideEnds - performance.now())/1000);
