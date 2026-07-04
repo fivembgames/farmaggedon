@@ -1,0 +1,1643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RIGMAN — Hide & Seek Paint</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #12151c;
+    font-family: 'Segoe UI', system-ui, sans-serif; color: #e6ecf5; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+  .ov { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+    background: rgba(10,13,19,.78); backdrop-filter: blur(6px); }
+  .card { background: rgba(18,22,30,.95); border: 1px solid #2b3444; border-radius: 14px;
+    padding: 26px 30px; width: 420px; max-width: 94vw; box-shadow: 0 14px 50px rgba(0,0,0,.55); }
+  .card h1 { margin: 0 0 2px; font-size: 22px; letter-spacing: 3px; color: #8fd0ff; }
+  .card .sub { margin: 0 0 18px; font-size: 11px; letter-spacing: 2px; color: #6a7686; }
+  .card label { display: block; font-size: 11px; letter-spacing: 1px; color: #9fb0c6; margin: 12px 0 4px; }
+  .card input[type=text] { width: 100%; padding: 10px 12px; font-size: 15px; border-radius: 8px;
+    border: 1px solid #33405a; background: #10141c; color: #e6ecf5; outline: none; }
+  .card input[type=text]:focus { border-color: #5fa0ff; }
+  .bigbtn { width: 100%; padding: 12px; margin-top: 10px; font-size: 14px; letter-spacing: 2px;
+    border: 1px solid #33405a; border-radius: 9px; cursor: pointer; background: #1c2432; color: #cdd8ea;
+    transition: all .12s; }
+  .bigbtn:hover { background: #263248; border-color: #4a6088; }
+  .bigbtn.primary { background: #2f74d0; border-color: #5fa0ff; color: #fff; }
+  .bigbtn.primary:hover { background: #3a84e4; }
+  .bigbtn:disabled { opacity: .45; cursor: default; }
+  .split { display: flex; gap: 10px; }
+  .split > * { flex: 1; }
+  .code-big { font-size: 34px; letter-spacing: 10px; color: #7fffaa; text-align: center;
+    padding: 10px 0 2px; font-family: 'Consolas', monospace; text-shadow: 0 0 12px rgba(127,255,170,.4); }
+  .levels { display: flex; gap: 10px; margin-top: 6px; }
+  .lvl { flex: 1; border: 2px solid #33405a; border-radius: 10px; padding: 12px 10px; cursor: pointer;
+    text-align: center; transition: all .12s; }
+  .lvl:hover { border-color: #4a6088; }
+  .lvl.sel { border-color: #7fffaa; box-shadow: 0 0 14px rgba(127,255,170,.25); }
+  .lvl .ico { font-size: 30px; }
+  .lvl .nm { font-size: 12px; letter-spacing: 1px; margin-top: 6px; color: #cdd8ea; }
+  .plist { margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; }
+  .plist li { padding: 6px 10px; border-bottom: 1px solid #222b3a; display: flex; justify-content: space-between; }
+  .plist .role { color: #ffb26b; font-size: 11px; letter-spacing: 1px; }
+  .plist .role.hider { color: #7fffaa; }
+  .err { color: #ff7a7a; font-size: 12px; margin-top: 10px; min-height: 15px; }
+  .muted { color: #6a7686; font-size: 11px; margin-top: 12px; line-height: 1.5; }
+
+  /* HUD */
+  #hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: none; }
+  #hud > * { pointer-events: auto; }
+  #topbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    background: rgba(18,22,30,.85); border: 1px solid #2b3444; border-radius: 10px;
+    padding: 8px 22px; text-align: center; }
+  #phaselbl { font-size: 14px; letter-spacing: 3px; color: #8fd0ff; }
+  #timerlbl { font-size: 20px; font-family: Consolas, monospace; color: #fff; }
+  #roster { position: absolute; top: 12px; right: 12px; background: rgba(18,22,30,.85);
+    border: 1px solid #2b3444; border-radius: 10px; padding: 10px 14px; font-size: 12px; min-width: 150px; }
+  #roster h3 { margin: 0 0 6px; font-size: 10px; letter-spacing: 2px; color: #6a7686; }
+  #roster div { padding: 2px 0; }
+  #roster .st { float: right; margin-left: 12px; color: #7fffaa; }
+  #roster .st.found { color: #ff7a7a; }
+  #rolebadge { position: absolute; top: 12px; left: 12px; background: rgba(18,22,30,.85);
+    border: 1px solid #2b3444; border-radius: 10px; padding: 10px 16px; }
+  #rolebadge .r { font-size: 16px; letter-spacing: 3px; }
+  #rolebadge .r.seeker { color: #ffb26b; }
+  #rolebadge .r.hider { color: #7fffaa; }
+  #rolebadge .hint { font-size: 10px; color: #6a7686; margin-top: 3px; max-width: 210px; line-height: 1.5; }
+
+  #actionbar { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; align-items: flex-end; }
+  .act { padding: 11px 16px; font-size: 12px; letter-spacing: 1px; border: 1px solid #33405a;
+    border-radius: 9px; cursor: pointer; background: rgba(28,36,50,.92); color: #cdd8ea; transition: all .12s; }
+  .act:hover { background: #263248; border-color: #4a6088; }
+  .act.on { background: #2f74d0; border-color: #5fa0ff; color: #fff; }
+  .act.warn { background: #d0662f; border-color: #ffa25f; color: #fff; }
+  .act:disabled { opacity: .4; cursor: default; }
+  .key { display: inline-block; font-size: 9px; border: 1px solid #4a6088; border-radius: 4px;
+    padding: 1px 5px; margin-left: 6px; color: #8fd0ff; }
+
+  #paintbox { position: absolute; bottom: 14px; left: 14px; background: rgba(18,22,30,.9);
+    border: 1px solid #2b3444; border-radius: 12px; padding: 12px 14px; width: 190px; display: none; }
+  #paintbox h3 { margin: 0 0 8px; font-size: 10px; letter-spacing: 2px; color: #8fd0ff; }
+  #paintbox .row { display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; color: #9fb0c6; margin: 8px 0 3px; }
+  #paintbox input[type=range] { width: 100%; accent-color: #5fa0ff; }
+  #paintbox input[type=color] { width: 42px; height: 24px; padding: 0; border: 1px solid #33405a;
+    border-radius: 5px; background: none; cursor: pointer; }
+  #paintbox .sm { width: 100%; margin-top: 8px; padding: 8px; font-size: 11px; letter-spacing: 1px;
+    border: 1px solid #33405a; border-radius: 7px; cursor: pointer; background: #1c2432; color: #cdd8ea; }
+  #paintbox .sm:hover { background: #263248; }
+
+  #toasts { position: absolute; top: 74px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .toast { background: rgba(18,22,30,.92); border: 1px solid #3a4a66; border-radius: 8px;
+    padding: 8px 18px; font-size: 13px; animation: tfade 4s forwards; }
+  @keyframes tfade { 0% { opacity: 0; transform: translateY(-8px); } 8% { opacity: 1; transform: none; }
+    80% { opacity: 1; } 100% { opacity: 0; } }
+  #centerhint { position: absolute; bottom: 84px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: 1px; color: #9fb0c6; background: rgba(18,22,30,.75);
+    padding: 6px 16px; border-radius: 8px; display: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<!-- ============ HOME ============ -->
+<div class="ov" id="home">
+  <div class="card">
+    <h1>HIDE &amp; SEEK PAINT</h1>
+    <p class="sub">RIGMAN MULTIPLAYER · PAINT YOURSELF · BLEND IN</p>
+    <label>YOUR NAME</label>
+    <input type="text" id="nm" maxlength="14" placeholder="player name">
+    <div class="split">
+      <button class="bigbtn primary" id="hostbtn">HOST GAME</button>
+    </div>
+    <label>OR JOIN WITH A CODE</label>
+    <div class="split">
+      <input type="text" id="joincode" maxlength="4" placeholder="CODE" style="text-transform:uppercase">
+      <button class="bigbtn" id="joinbtn">JOIN</button>
+    </div>
+    <button class="bigbtn" id="solobtn">SOLO TEST (VS BOTS)</button>
+    <div class="err" id="homeerr"></div>
+    <p class="muted">Host is the <b>seeker</b> — everyone who joins is a <b>hider</b>. Hiders pose, paint themselves
+    to blend into the level, and confirm. The seeker then hunts them down with an air horn.</p>
+  </div>
+</div>
+
+<!-- ============ LOBBY ============ -->
+<div class="ov" id="lobby" style="display:none">
+  <div class="card">
+    <h1>LOBBY</h1>
+    <p class="sub">SHARE THIS CODE</p>
+    <div class="code-big" id="codelbl">----</div>
+    <label>LEVEL <span id="lvlnote" style="color:#556;letter-spacing:0"></span></label>
+    <div class="levels">
+      <div class="lvl sel" id="lvl-picnic"><div class="ico">🍉</div><div class="nm">PICNIC PANIC</div></div>
+      <div class="lvl" id="lvl-backyard"><div class="ico">🌲</div><div class="nm">BACKYARD WILDS</div></div>
+    </div>
+    <label>PLAYERS</label>
+    <ul class="plist" id="plist"></ul>
+    <button class="bigbtn primary" id="startbtn" style="display:none">START GAME</button>
+    <div class="muted" id="lobbywait"></div>
+    <div class="err" id="lobbyerr"></div>
+  </div>
+</div>
+
+<!-- ============ GAME OVER ============ -->
+<div class="ov" id="over" style="display:none">
+  <div class="card">
+    <h1>ALL FOUND!</h1>
+    <p class="sub">GAME OVER</p>
+    <ul class="plist" id="results"></ul>
+    <button class="bigbtn primary" id="againbtn" style="display:none">BACK TO LOBBY</button>
+    <div class="muted" id="overwait"></div>
+  </div>
+</div>
+
+<!-- ============ HUD ============ -->
+<div id="hud">
+  <div id="topbar"><div id="phaselbl">HIDE</div><div id="timerlbl">1:30</div></div>
+  <div id="rolebadge"><div class="r" id="rolelbl">HIDER</div><div class="hint" id="rolehint"></div></div>
+  <div id="roster"><h3>PLAYERS</h3><div id="rosterrows"></div></div>
+  <div id="toasts"></div>
+  <div id="centerhint"></div>
+  <div id="actionbar">
+    <button class="act" data-pose="idle">STAND<span class="key">1</span></button>
+    <button class="act" data-pose="sit">SIT<span class="key">2</span></button>
+    <button class="act" data-pose="lie">LIE<span class="key">3</span></button>
+    <button class="act" data-pose="turtle">TURTLE<span class="key">4</span></button>
+    <button class="act" data-pose="x">X POSE<span class="key">5</span></button>
+    <button class="act" id="releasebtn" style="display:none">RELEASE<span class="key">R</span></button>
+    <button class="act on" id="confirmbtn" style="display:none">CONFIRM HIDE<span class="key">⏎</span></button>
+    <button class="act" id="whistlebtn" style="display:none">WHISTLE<span class="key">Q</span></button>
+    <button class="act warn" id="hornbtn" style="display:none">AIR HORN<span class="key">E</span></button>
+    <button class="act" id="skipbtn" style="display:none">START SEEKING →</button>
+  </div>
+  <div id="paintbox">
+    <h3>PAINT YOURSELF</h3>
+    <div class="row"><span>COLOR</span><input type="color" id="pcol" value="#ff5566"></div>
+    <div class="row"><span>RADIUS</span><span id="pradv">0.14</span></div>
+    <input type="range" id="prad" min="0.03" max="0.5" step="0.01" value="0.14">
+    <button class="sm" id="preset">RESET COLORS</button>
+    <div class="row" style="margin-top:6px;color:#55627a">left-drag paints · right-drag orbits</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/utils/SkeletonUtils.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+'use strict';
+
+// ============================================================
+//  CONFIG
+// ============================================================
+const WALK_SPEED = 3.6;
+const JUMP_V = 4.8, GRAVITY = 13;
+const BOUND_R = 19;                 // playable radius
+const HIDE_TIME = 90;               // seconds to hide
+const HORN_RANGE = 2.8;             // tag radius
+const HORN_CD = 2.5, WHISTLE_CD = 4;
+const NET_HZ = 10;
+const PEER_PREFIX = 'rigman-hsp-';
+
+const $ = id => document.getElementById(id);
+
+// ============================================================
+//  RENDERER / SCENE / CAMERA
+// ============================================================
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+$('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x12151c);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(0, 6, 10);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enablePan = false;
+controls.minDistance = 2.2;
+controls.maxDistance = 16;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.target.set(0, 1.1, 0);
+
+scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x3a4232, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.9);
+sun.position.set(14, 24, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 70;
+sun.shadow.camera.left = -24; sun.shadow.camera.right = 24;
+sun.shadow.camera.top = 24; sun.shadow.camera.bottom = -24;
+sun.shadow.bias = -0.0006;
+scene.add(sun);
+
+// ============================================================
+//  AUDIO (synthesized — no assets)
+// ============================================================
+let AC = null;
+function audio(){ if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); return AC; }
+function tone(type, f0, f1, dur, vol, pan, delay){
+  const ac = audio(), t = ac.currentTime + (delay||0);
+  const o = ac.createOscillator(), g = ac.createGain(), p = ac.createStereoPanner ? ac.createStereoPanner() : null;
+  o.type = type; o.frequency.setValueAtTime(f0, t);
+  if (f1 !== f0) o.frequency.linearRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g);
+  if (p){ p.pan.value = pan || 0; g.connect(p); p.connect(ac.destination); }
+  else g.connect(ac.destination);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function sndWhistle(vol, pan){        // two chirps, louder when closer
+  tone('sine', 1750, 2350, 0.28, vol, pan, 0);
+  tone('sine', 2350, 1650, 0.30, vol, pan, 0.30);
+}
+function sndHorn(vol, pan){           // rude air-horn blast
+  tone('sawtooth', 233, 233, 0.85, vol, pan, 0);
+  tone('sawtooth', 311, 311, 0.85, vol*0.8, pan, 0);
+  tone('square', 466, 460, 0.85, vol*0.25, pan, 0);
+}
+function sndFound(){ tone('triangle', 880, 660, 0.15, 0.3, 0, 0); tone('triangle', 660, 440, 0.25, 0.3, 0, 0.15); }
+function sndWin(){ [523,659,784,1047].forEach((f,i)=>tone('triangle', f, f, 0.22, 0.28, 0, i*0.13)); }
+function sndPop(){ tone('sine', 520, 700, 0.09, 0.2, 0, 0); }
+
+// ============================================================
+//  RIG — master model, basis, poses (ported from the viewer)
+// ============================================================
+let masterModel = null, masterMesh = null, ready = false;
+let MASTER_POS = new THREE.Vector3(), MASTER_QUAT = new THREE.Quaternion();
+let MESH_WSCALE = 1, BASE_COL = new THREE.Color(0xcbd2dc);
+const BONE_DATA = {};    // name -> { rest, pwq, pwqInv } (shared by all clones)
+const mBones = {};       // master bones by name (basis/setup only)
+const Z_AXIS = new THREE.Vector3(0,0,1), X_AXIS = new THREE.Vector3(1,0,0), Y_AXIS = new THREE.Vector3(0,1,0);
+const UP = new THREE.Vector3(0,1,0), FWD = new THREE.Vector3(0,0,1), RIGHT = new THREE.Vector3(1,0,0);
+
+const ANIM_BONES = [
+  'spine.001','spine.002','spine.003','spine.005','spine.006',
+  'upper_arm.L','forearm.L','upper_arm.R','forearm.R',
+  'thigh.L','shin.L','foot.L','thigh.R','shin.R','foot.R'
+];
+const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+const NEEDED = ANIM_BONES.concat(['toe.L','toe.R','heel.02.L','heel.02.R','hand.L','hand.R']);
+
+new THREE.GLTFLoader().load('rigman.glb', onModel, undefined,
+  e => { $('homeerr').textContent = 'could not load rigman.glb — keep it next to this file'; console.error(e); });
+
+function onModel(gltf){
+  masterModel = gltf.scene;
+  scene.add(masterModel);                       // temporarily, for world-space setup
+  const idx = {};
+  masterModel.traverse(o => {
+    if (o.isMesh){ o.castShadow = true; o.frustumCulled = false; }
+    if (o.isSkinnedMesh){
+      masterMesh = o;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats){ if (m){ m.skinning = true; m.needsUpdate = true; } }
+    }
+    if (o.isBone) idx[norm(o.name)] = o;
+  });
+  for (const nm of NEEDED){ const b = idx[norm(nm)]; if (b) mBones[nm] = b; }
+
+  scene.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(masterModel);
+  const h = (box.max.y - box.min.y) || 1;
+  masterModel.scale.multiplyScalar(1.7 / h);
+  scene.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(masterModel);
+  const c = box.getCenter(new THREE.Vector3());
+  masterModel.position.x -= c.x;
+  masterModel.position.z -= c.z;
+  masterModel.position.y -= box.min.y;
+  scene.updateMatrixWorld(true);
+
+  computeBasis();
+  masterModel.rotation.y -= Math.atan2(FWD.x, FWD.z);   // face +Z at yaw 0
+  scene.updateMatrixWorld(true);
+  computeBasis();
+  orientArmDown('upper_arm.L', 'upper_arm.R');
+  orientArmDown('upper_arm.R', 'upper_arm.L');
+  scene.updateMatrixWorld(true);
+
+  for (const name of ANIM_BONES){
+    const b = mBones[name]; if (!b) continue;
+    const pwq = (b.parent || scene).getWorldQuaternion(new THREE.Quaternion());
+    BONE_DATA[name] = { rest: b.quaternion.clone(), pwq, pwqInv: pwq.clone().invert() };
+  }
+  MASTER_POS.copy(masterModel.position);
+  MASTER_QUAT.copy(masterModel.quaternion);
+  if (masterMesh){
+    MESH_WSCALE = masterMesh.getWorldScale(new THREE.Vector3()).x || 1;
+    const mats = Array.isArray(masterMesh.material) ? masterMesh.material : [masterMesh.material];
+    if (mats[0] && mats[0].color) BASE_COL.copy(mats[0].color);
+  }
+  scene.remove(masterModel);                    // clones only from here on
+  ready = true;
+}
+
+function computeBasis(){
+  const toe = midWorld('toe.L','toe.R');
+  const heel = midWorld('heel.02.L','heel.02.R') || midWorld('foot.L','foot.R');
+  if (toe && heel){
+    FWD.copy(toe).sub(heel); FWD.y = 0;
+    if (FWD.lengthSq() < 1e-6) FWD.set(0,0,1);
+    FWD.normalize();
+  } else FWD.set(0,0,1);
+  UP.set(0,1,0);
+  RIGHT.crossVectors(UP, FWD).normalize();
+}
+function midWorld(a, b){
+  const ba = mBones[a], bb = mBones[b];
+  if (!ba || !bb) return null;
+  return ba.getWorldPosition(new THREE.Vector3()).add(bb.getWorldPosition(new THREE.Vector3())).multiplyScalar(0.5);
+}
+function orientArmDown(name, otherName){
+  const b = mBones[name]; if (!b) return;
+  const child = b.children.find(x => x.isBone) || b;
+  const from = b.getWorldPosition(new THREE.Vector3());
+  const cur = child.getWorldPosition(new THREE.Vector3()).sub(from);
+  if (cur.lengthSq() < 1e-6) return;
+  cur.normalize();
+  let outSign = 1;
+  const other = mBones[otherName];
+  if (other){
+    const op = other.getWorldPosition(new THREE.Vector3());
+    outSign = Math.sign(from.clone().sub(op).dot(RIGHT)) || 1;
+  }
+  const target = UP.clone().multiplyScalar(-1)
+    .add(RIGHT.clone().multiplyScalar(0.36 * outSign))
+    .add(FWD.clone().multiplyScalar(0.02)).normalize();
+  const qWorld = new THREE.Quaternion().setFromUnitVectors(cur, target);
+  const pwq = b.parent.getWorldQuaternion(new THREE.Quaternion());
+  const nq = pwq.clone().invert().multiply(qWorld).multiply(pwq).multiply(b.quaternion);
+  b.quaternion.copy(nq);
+  b.updateMatrixWorld(true);
+}
+
+const _qa = new THREE.Quaternion(), _dw = new THREE.Quaternion();
+function poseBone(name, aRight, aUp, aFwd, out){
+  const bd = BONE_DATA[name]; if (!bd) return;
+  _dw.identity();
+  if (aRight) _dw.multiply(_qa.setFromAxisAngle(RIGHT, aRight));
+  if (aUp)    _dw.multiply(_qa.setFromAxisAngle(UP, aUp));
+  if (aFwd)   _dw.multiply(_qa.setFromAxisAngle(FWD, aFwd));
+  const q = out[name] || (out[name] = new THREE.Quaternion());
+  q.copy(bd.pwqInv).multiply(_dw).multiply(bd.pwq).multiply(bd.rest);
+  if (out.__w) out.__w.add(name);
+}
+const fwdSwing = t => -t;
+
+// ---- poses (values hand-tuned in the viewer) ----
+function poseIdle(t, out){
+  const b = Math.sin(t * 2*Math.PI / 4.5);
+  const b2 = Math.sin(t * 2*Math.PI / 3.1);
+  poseBone('spine.001', -0.02, 0.015*b2, 0, out);
+  poseBone('spine.002', -0.02 + 0.03*b, 0, 0.01*b2, out);
+  poseBone('spine.003',  0.015*b, 0.02*b2, 0, out);
+  poseBone('spine.005',  0.02*Math.sin(t*0.9), 0.03*Math.sin(t*0.6), 0, out);
+  poseBone('spine.006',  0.03*Math.sin(t*0.8), 0.05*Math.sin(t*0.55), 0, out);
+  poseBone('upper_arm.L', 0.03*Math.sin(t*0.8),  0, 0, out);
+  poseBone('upper_arm.R', 0.03*Math.sin(t*0.8+1),0, 0, out);
+  poseBone('forearm.L', fwdSwing(0.05 + 0.03*b), 0, 0, out);
+  poseBone('forearm.R', fwdSwing(0.05 - 0.03*b), 0, 0, out);
+  poseBone('thigh.L', fwdSwing(0.03), 0, 0, out);
+  poseBone('thigh.R', fwdSwing(0.03), 0, 0, out);
+  poseBone('shin.L', 0.05, 0, 0, out);
+  poseBone('shin.R', 0.05, 0, 0, out);
+  return { x: 0.02*Math.sin(t*0.5), y: 0.006*b };
+}
+function poseWalk(t, out){
+  const w = t * 2*Math.PI;
+  const s = Math.sin(w), sO = Math.sin(w + Math.PI);
+  poseBone('thigh.L', fwdSwing(0.55*s), 0, 0, out);
+  poseBone('thigh.R', fwdSwing(0.55*sO), 0, 0, out);
+  const kneeL = 0.15 + 0.85*Math.max(0, Math.sin(w + 2.1));
+  const kneeR = 0.15 + 0.85*Math.max(0, Math.sin(w + Math.PI + 2.1));
+  poseBone('shin.L', kneeL, 0, 0, out);
+  poseBone('shin.R', kneeR, 0, 0, out);
+  poseBone('foot.L', fwdSwing(-0.15) - 0.35*Math.max(0,s),  0, 0, out);
+  poseBone('foot.R', fwdSwing(-0.15) - 0.35*Math.max(0,sO), 0, 0, out);
+  poseBone('upper_arm.L', fwdSwing(-0.45*s),  0, 0, out);
+  poseBone('upper_arm.R', fwdSwing(-0.45*sO), 0, 0, out);
+  poseBone('forearm.L', fwdSwing(0.30 + 0.15*Math.max(0,-s)), 0, 0, out);
+  poseBone('forearm.R', fwdSwing(0.30 + 0.15*Math.max(0,-sO)), 0, 0, out);
+  poseBone('spine.001', fwdSwing(0.07), 0.10*s, 0, out);
+  poseBone('spine.002', 0, 0.06*s, 0, out);
+  poseBone('spine.003', 0, 0.05*s, 0, out);
+  poseBone('spine.006', 0.02, -0.05*s, 0, out);
+  return { x: 0.03*s, y: -0.02 - 0.035*Math.abs(Math.cos(w)) };
+}
+function poseSit(t, out){
+  const br = 0.02*Math.sin(t*1.4);
+  poseBone('thigh.L', fwdSwing(1.45), 0, 0.06, out);
+  poseBone('thigh.R', fwdSwing(1.45), 0,-0.06, out);
+  poseBone('shin.L', 1.5, 0, 0, out);
+  poseBone('shin.R', 1.5, 0, 0, out);
+  poseBone('foot.L', fwdSwing(-0.25), 0, 0, out);
+  poseBone('foot.R', fwdSwing(-0.25), 0, 0, out);
+  poseBone('spine.001', fwdSwing(0.12), 0, 0, out);
+  poseBone('spine.002', -0.02 + br, 0, 0, out);
+  poseBone('spine.003', 0.04, 0, 0, out);
+  poseBone('spine.006', 0.08, 0.04*Math.sin(t*0.6), 0, out);
+  poseBone('upper_arm.L', fwdSwing(0.85), 0,-0.45, out);
+  poseBone('upper_arm.R', fwdSwing(0.85), 0, 0.45, out);
+  poseBone('forearm.L', fwdSwing(0.18), 0, 0, out);
+  poseBone('forearm.R', fwdSwing(0.18), 0, 0, out);
+  return { x: 0, y: -0.46 };
+}
+function poseLie(t, out){
+  const br = 0.015*Math.sin(t*1.2);
+  poseBone('thigh.L', fwdSwing(0.28), 0, -0.22, out);
+  poseBone('thigh.R', fwdSwing(0.28), 0, 0, out);
+  poseBone('shin.L', 0.45, 0, 0, out);
+  poseBone('shin.R', 0.45, 0, 0, out);
+  poseBone('foot.L', fwdSwing(-0.20), 0, 0, out);
+  poseBone('foot.R', fwdSwing(-0.20), 0, 0, out);
+  poseBone('upper_arm.R', fwdSwing(.90), 1.35, -1.65, out);
+  poseBone('forearm.R', fwdSwing(1.85), 0, 0, out);
+  poseBone('upper_arm.L', fwdSwing(0.06), 0, -0.40, out);
+  poseBone('forearm.L', fwdSwing(0.10), 0, 0, out);
+  poseBone('spine.001', fwdSwing(0.10), 0, 0, out);
+  poseBone('spine.002', -0.02 + br, 0, 0, out);
+  poseBone('spine.003', 0.03, 0, 0, out);
+  poseBone('spine.005', 0.10, 0, -0.20, out);
+  poseBone('spine.006', 0.15, 0.03*Math.sin(t*0.5), -0.30, out);
+  return { x: 0.45, y: 0.20, roll: Math.PI/2 };
+}
+function poseTurtle(t, out){
+  const br = 0.02*Math.sin(t*1.6);
+  poseBone('thigh.L', fwdSwing(2.20), 0, 0, out);
+  poseBone('thigh.R', fwdSwing(2.20), 0, 0, out);
+  poseBone('shin.L', 2.30, 0, 0, out);
+  poseBone('shin.R', 2.30, 0, 0, out);
+  poseBone('foot.L', fwdSwing(-.1), 0, 0, out);
+  poseBone('foot.R', fwdSwing(-.1), 0, 0, out);
+  poseBone('upper_arm.L', fwdSwing(1.55), 0, -0.45, out);
+  poseBone('upper_arm.R', fwdSwing(1.55), 0,  0.45, out);
+  poseBone('forearm.L', fwdSwing(1.85), 0, -0.25, out);
+  poseBone('forearm.R', fwdSwing(1.85), 0,  0.25, out);
+  poseBone('spine.001', fwdSwing(-0.06), 0, 0, out);
+  poseBone('spine.002', fwdSwing(-0.055) + br, 0, 0, out);
+  poseBone('spine.003', fwdSwing(-0.05), 0, 0, out);
+  poseBone('spine.005', 0.45, 0, 0, out);
+  poseBone('spine.006', 0.55, 0, 0, out);
+  return { x: 0, y: 0.38, z: -0.55, pitch: Math.PI/2 };
+}
+function poseX(t, out){
+  const br = 0.015*Math.sin(t*1.3);
+  poseBone('upper_arm.L', 0, 0,  2.40, out);
+  poseBone('upper_arm.R', 0, 0, -2.40, out);
+  poseBone('forearm.L', fwdSwing(0.05), 0, 0, out);
+  poseBone('forearm.R', fwdSwing(0.05), 0, 0, out);
+  poseBone('thigh.L', fwdSwing(0.02), 0,  0.40, out);
+  poseBone('thigh.R', fwdSwing(0.02), 0, -0.40, out);
+  poseBone('shin.L', 0.05, 0, 0, out);
+  poseBone('shin.R', 0.05, 0, 0, out);
+  poseBone('spine.001', -0.01, 0, 0, out);
+  poseBone('spine.002', -0.01 + br, 0, 0, out);
+  poseBone('spine.003',  br, 0, 0, out);
+  poseBone('spine.006', 0.02*Math.sin(t*0.7), 0.03*Math.sin(t*0.5), 0, out);
+  return { x: 0, y: -0.06 };
+}
+const POSE = { idle: poseIdle, walk: poseWalk, sit: poseSit, lie: poseLie, turtle: poseTurtle, x: poseX };
+const HIDE_POSES = ['idle','sit','lie','turtle','x'];
+
+// ============================================================
+//  CHARACTER — a posable, paintable rig clone
+// ============================================================
+const outA = {}, outB = {};
+const writtenA = new Set(), writtenB = new Set();
+const rootA = new THREE.Vector3(), rootB = new THREE.Vector3(), rootO = new THREE.Vector3();
+const _qR = new THREE.Quaternion(), _qP = new THREE.Quaternion();
+const smooth = x => x*x*(3-2*x);
+const BLEND_TIME = 0.3;
+
+function makeTag(text, color){
+  const pad = 8, font = 30;
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d');
+  ctx.font = 'bold ' + font + 'px system-ui';
+  c.width = Math.ceil(ctx.measureText(text).width) + pad*2;
+  c.height = font + pad*2;
+  ctx.font = 'bold ' + font + 'px system-ui';
+  ctx.fillStyle = 'rgba(8,12,18,0.7)';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = color || '#8fd0ff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, pad, c.height/2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  spr.renderOrder = 998;
+  const hgt = 0.22;
+  spr.scale.set(hgt * c.width/c.height, hgt, 1);
+  return spr;
+}
+
+class Character {
+  constructor(id, name, role){
+    this.id = id; this.name = name; this.role = role;
+    this.group = new THREE.Group();
+    this.model = THREE.SkeletonUtils.clone(masterModel);
+    this.group.add(this.model);
+    scene.add(this.group);
+
+    this.bones = {}; this.mesh = null;
+    this.model.traverse(o => {
+      if (o.isBone) { const key = NEEDED.find(nm => norm(nm) === norm(o.name)); if (key) this.bones[key] = o; }
+      if (o.isSkinnedMesh) this.mesh = o;
+      if (o.isMesh){ o.castShadow = true; o.frustumCulled = false; }
+    });
+    if (this.mesh){
+      this.mesh.geometry = this.mesh.geometry.clone();      // per-player paint surface
+      const src = Array.isArray(this.mesh.material) ? this.mesh.material[0] : this.mesh.material;
+      const m = src.clone();
+      m.skinning = true; m.vertexColors = true;
+      if (m.color) m.color.setRGB(1,1,1);
+      m.needsUpdate = true;
+      this.mesh.material = m;
+      const n = this.mesh.geometry.attributes.position.count;
+      const arr = new Float32Array(n*3);
+      for (let i = 0; i < n; i++){ arr[i*3]=BASE_COL.r; arr[i*3+1]=BASE_COL.g; arr[i*3+2]=BASE_COL.b; }
+      this.mesh.geometry.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+      this.colorAttr = this.mesh.geometry.attributes.color;
+    }
+
+    this.pos = new THREE.Vector3(); this.yaw = 0; this.vy = 0; this.airborne = false;
+    this.anim = 'idle'; this.prev = null; this.blend = 1;
+    this.phases = { idle:0, walk:0, sit:0, lie:0, turtle:0, x:0 };
+    this.posed = null;           // pose name when locked in a hiding pose
+    this.confirmed = false; this.found = false;
+    this.netT = null;            // remote interpolation target
+
+    this.tag = makeTag(name, role === 'seeker' ? '#ffb26b' : '#7fffaa');
+    this.tag.position.y = 2.15;
+    this.group.add(this.tag);
+  }
+  setAnim(name){
+    if (name === this.anim && this.blend >= 1) return;
+    if (name === this.anim) return;
+    this.prev = this.anim; this.anim = name; this.blend = 0;
+  }
+  update(dt){
+    for (const k in this.phases) this.phases[k] += dt * (k === 'walk' ? 1.35 : 1);
+    if (this.blend < 1) this.blend = Math.min(1, this.blend + dt / BLEND_TIME);
+    const k = smooth(this.blend);
+    const blending = this.prev && this.blend < 1;
+
+    outB.__w = writtenB; writtenB.clear();
+    for (const key in outB) if (key !== '__w') delete outB[key];
+    const r = POSE[this.anim](this.phases[this.anim], outB); rootB.set(r.x, r.y, r.z || 0);
+    let roll = r.roll || 0, pitch = r.pitch || 0;
+    let rp = null;
+    if (blending){
+      outA.__w = writtenA; writtenA.clear();
+      for (const key in outA) if (key !== '__w') delete outA[key];
+      rp = POSE[this.prev](this.phases[this.prev], outA); rootA.set(rp.x, rp.y, rp.z || 0);
+    }
+    for (const name of ANIM_BONES){
+      const bone = this.bones[name], bd = BONE_DATA[name];
+      if (!bone || !bd) continue;
+      const qb = writtenB.has(name) ? outB[name] : bd.rest;
+      if (blending){
+        const qa = writtenA.has(name) ? outA[name] : bd.rest;
+        bone.quaternion.copy(qa).slerp(qb, k);
+      } else bone.quaternion.copy(qb);
+    }
+    if (blending){
+      rootO.copy(rootA).lerp(rootB, k);
+      roll  = (rp.roll  || 0) + (roll  - (rp.roll  || 0)) * k;
+      pitch = (rp.pitch || 0) + (pitch - (rp.pitch || 0)) * k;
+    } else rootO.copy(rootB);
+
+    this.model.position.set(MASTER_POS.x + rootO.x, MASTER_POS.y + rootO.y, MASTER_POS.z + rootO.z);
+    this.model.quaternion.copy(MASTER_QUAT);
+    if (pitch) this.model.quaternion.premultiply(_qP.setFromAxisAngle(X_AXIS, pitch));
+    if (roll)  this.model.quaternion.premultiply(_qR.setFromAxisAngle(Z_AXIS, roll));
+
+    // remote interpolation
+    if (this.netT){
+      this.pos.x += (this.netT.x - this.pos.x) * Math.min(1, dt*12);
+      this.pos.z += (this.netT.z - this.pos.z) * Math.min(1, dt*12);
+      this.pos.y += (this.netT.h - this.pos.y) * Math.min(1, dt*12);
+      let dy = this.netT.yaw - this.yaw;
+      while (dy >  Math.PI) dy -= 2*Math.PI;
+      while (dy < -Math.PI) dy += 2*Math.PI;
+      this.yaw += dy * Math.min(1, dt*12);
+    }
+    this.group.position.copy(this.pos);
+    this.group.rotation.y = this.yaw;
+  }
+  applyStroke(vi, hex, rWorld){
+    if (!this.colorAttr) return;
+    const posA = this.mesh.geometry.attributes.position;
+    const R = rWorld / MESH_WSCALE, R2 = R*R;               // paint in bind space → identical on every peer
+    const cx = posA.getX(vi), cy = posA.getY(vi), cz = posA.getZ(vi);
+    const col = new THREE.Color(hex);
+    const arr = this.colorAttr.array, n = posA.count;
+    for (let i = 0; i < n; i++){
+      const dx = posA.getX(i)-cx, dy = posA.getY(i)-cy, dz = posA.getZ(i)-cz;
+      const d2 = dx*dx + dy*dy + dz*dz;
+      if (d2 > R2) continue;
+      let w = (1 - Math.sqrt(d2)/R) / 0.4; if (w > 1) w = 1;
+      const j = i*3;
+      arr[j]   += (col.r - arr[j])   * w;
+      arr[j+1] += (col.g - arr[j+1]) * w;
+      arr[j+2] += (col.b - arr[j+2]) * w;
+    }
+    this.colorAttr.needsUpdate = true;
+  }
+  resetColors(){
+    if (!this.colorAttr) return;
+    const arr = this.colorAttr.array;
+    for (let i = 0; i < arr.length; i += 3){ arr[i]=BASE_COL.r; arr[i+1]=BASE_COL.g; arr[i+2]=BASE_COL.b; }
+    this.colorAttr.needsUpdate = true;
+  }
+  setFound(){
+    this.found = true; this.posed = null;
+    if (this.mesh){ this.mesh.material.transparent = true; this.mesh.material.opacity = 0.35; }
+    this.group.remove(this.tag);
+    this.tag = makeTag(this.name + ' · FOUND', '#ff7a7a');
+    this.tag.position.y = 2.15;
+    this.group.add(this.tag);
+  }
+  dispose(){
+    scene.remove(this.group);
+    if (this.mesh){ this.mesh.geometry.dispose(); this.mesh.material.dispose(); }
+  }
+}
+
+// ============================================================
+//  LEVELS
+// ============================================================
+let levelGroup = null, colliders = [], levelName = 'picnic';
+const LEVELS = {
+  picnic: { label: 'PICNIC PANIC', sky: 0xffd9a8, fog: [0xffd9a8, 30, 90],
+    palette: ['#d94f3a','#f2e3c6','#e8b26a','#6b3f23','#ffd24a','#ff9fd0','#7ec850','#e8e2d2'] },
+  backyard: { label: 'BACKYARD WILDS', sky: 0xa8d8ff, fog: [0xa8d8ff, 32, 95],
+    palette: ['#3f7d2e','#6b4a2b','#8a8f98','#2e6b4f','#59a84a','#7a9b5c','#4d3a26'] },
+};
+
+function mat(c, r){ return new THREE.MeshStandardMaterial({ color: c, roughness: r === undefined ? 0.9 : r }); }
+function put(g, x, y, z, m){ m = m || levelGroup; g.position.set(x, y, z); g.castShadow = true; g.receiveShadow = true; m.add(g); return g; }
+function col(x, z, r){ colliders.push({ x, z, r }); }
+
+function checkerTex(c1, c2){
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const x = c.getContext('2d');
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++){
+    x.fillStyle = (i+j)%2 ? c1 : c2; x.fillRect(i*64, j*64, 64, 64);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(10,10);
+  return t;
+}
+
+function buildLevel(name){
+  if (levelGroup){ scene.remove(levelGroup); }
+  levelGroup = new THREE.Group(); scene.add(levelGroup);
+  colliders = []; levelName = name;
+  const L = LEVELS[name];
+  scene.background = new THREE.Color(L.sky);
+  scene.fog = new THREE.Fog(L.fog[0], L.fog[1], L.fog[2]);
+  if (name === 'picnic') buildPicnic(); else buildBackyard();
+  // perimeter fence posts (visual boundary)
+  const pm = mat(name === 'picnic' ? 0xb0937a : 0x7a6248);
+  for (let a = 0; a < Math.PI*2; a += Math.PI/16){
+    const p = put(new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.6, 0.25), pm), Math.cos(a)*(BOUND_R+0.8), 0.8, Math.sin(a)*(BOUND_R+0.8));
+    p.rotation.y = -a;
+  }
+}
+
+function buildPicnic(){
+  const g = new THREE.Mesh(new THREE.CircleGeometry(28, 48),
+    new THREE.MeshStandardMaterial({ map: checkerTex('#d94f3a','#f2e3c6'), roughness: 0.95 }));
+  g.rotation.x = -Math.PI/2; g.receiveShadow = true; levelGroup.add(g);
+
+  // burger
+  const bx = 7, bz = -4;
+  put(new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.2, 0.7, 24), mat(0xe8b26a)), bx, 0.35, bz);
+  put(new THREE.Mesh(new THREE.CylinderGeometry(2.25, 2.25, 0.55, 24), mat(0x6b3f23)), bx, 0.98, bz);
+  const cheese = put(new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.12, 4.6), mat(0xffd24a, 0.6)), bx, 1.3, bz);
+  cheese.rotation.y = Math.PI/4;
+  const bun = put(new THREE.Mesh(new THREE.SphereGeometry(2.2, 24, 16), mat(0xe8a34f)), bx, 1.35, bz);
+  bun.scale.y = 0.62;
+  col(bx, bz, 2.5);
+
+  // hot dog
+  const hx = -8, hz = -7;
+  const bunL = put(new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 5.6, 16), mat(0xe8b26a)), hx, 0.8, hz-0.62);
+  bunL.rotation.z = Math.PI/2;
+  const bunR = put(new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 5.6, 16), mat(0xe8b26a)), hx, 0.8, hz+0.62);
+  bunR.rotation.z = Math.PI/2;
+  const dog = put(new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 6.4, 16), mat(0xa34a2a, 0.7)), hx, 1.5, hz);
+  dog.rotation.z = Math.PI/2;
+  col(hx-1.8, hz, 1.7); col(hx+1.8, hz, 1.7);
+
+  // standing donut
+  const dn = put(new THREE.Mesh(new THREE.TorusGeometry(1.9, 0.75, 16, 32), mat(0xff9fd0, 0.75)), -3, 2.6, 8);
+  dn.rotation.y = 0.5;
+  col(-3, 8, 2.2);
+
+  // watermelon slice (flat wedge with seeds)
+  const wm = put(new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 0.9, 28, 1, false, 0, Math.PI*0.65), mat(0xd94f3a, 0.8)), 9, 0.45, 7);
+  wm.rotation.y = 2.4;
+  const rind = put(new THREE.Mesh(new THREE.TorusGeometry(3, 0.28, 10, 28, Math.PI*0.65), mat(0x3f7d2e, 0.8)), 9, 0.85, 7);
+  rind.rotation.x = -Math.PI/2; rind.rotation.z = 2.4 - Math.PI/2;
+  for (let i = 0; i < 7; i++){
+    const a = 2.4 + 0.5 + i*0.22, rr = 1.1 + (i%3)*0.55;
+    put(new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), mat(0x1a1208, 0.5)), 9 + Math.sin(a)*rr, 0.93, 7 + Math.cos(a)*rr);
+  }
+  col(9, 7, 3.1);
+
+  // soda can
+  put(new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 3.9, 20), mat(0xd0332f, 0.35)), -10, 1.95, 5);
+  put(new THREE.Mesh(new THREE.CylinderGeometry(1.16, 1.16, 0.5, 20), mat(0xc8ccd4, 0.3)), -10, 3.95, 5);
+  col(-10, 5, 1.35);
+
+  // cupcake
+  const cup = put(new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.1, 1.4, 18), mat(0x8b5a2b)), 1, 0.7, -9);
+  const icing = put(new THREE.Mesh(new THREE.SphereGeometry(1.5, 18, 12), mat(0xff9fd0, 0.7)), 1, 1.7, -9);
+  icing.scale.y = 0.75;
+  put(new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), mat(0xc22a3a, 0.4)), 1, 2.75, -9);
+  col(1, -9, 1.7);
+
+  // banana (curved torus arc on its side)
+  const ban = put(new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.5, 12, 24, Math.PI*0.75), mat(0xf5d33a, 0.7)), -1, 0.5, 1.5);
+  ban.rotation.x = -Math.PI/2; ban.rotation.z = 0.8;
+  col(-1.8, 2.8, 1.4); col(0.6, 1.2, 1.4);
+
+  // stacked plates
+  put(new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.6, 1.1, 24), mat(0xe8e2d2, 0.4)), -12, 0.55, -3);
+  col(-12, -3, 2.0);
+}
+
+function buildBackyard(){
+  const g = new THREE.Mesh(new THREE.CircleGeometry(28, 48), mat(0x4a8a3a, 1));
+  g.rotation.x = -Math.PI/2; g.receiveShadow = true; levelGroup.add(g);
+
+  function tree(x, z, s){
+    put(new THREE.Mesh(new THREE.CylinderGeometry(0.45*s, 0.6*s, 2.4*s, 10), mat(0x6b4a2b)), x, 1.2*s, z);
+    put(new THREE.Mesh(new THREE.ConeGeometry(2.1*s, 3.2*s, 12), mat(0x2e6b4f)), x, 3.6*s, z);
+    put(new THREE.Mesh(new THREE.ConeGeometry(1.6*s, 2.6*s, 12), mat(0x3f7d2e)), x, 5.2*s, z);
+    col(x, z, 0.9*s);
+  }
+  tree(8, -6, 1.2); tree(-9, -8, 1.0); tree(-4, 9, 1.35); tree(11, 6, 0.9); tree(-13, 2, 1.1); tree(3, -12, 1.0);
+
+  function bush(x, z, s){
+    put(new THREE.Mesh(new THREE.SphereGeometry(1.2*s, 12, 10), mat(0x3f7d2e)), x, 0.9*s, z);
+    put(new THREE.Mesh(new THREE.SphereGeometry(0.9*s, 12, 10), mat(0x59a84a)), x+0.9*s, 0.7*s, z+0.3*s);
+    put(new THREE.Mesh(new THREE.SphereGeometry(0.8*s, 12, 10), mat(0x4d8a3a)), x-0.7*s, 0.65*s, z-0.4*s);
+    col(x, z, 1.6*s);
+  }
+  bush(2, 5, 1.1); bush(-7, 4, 1.0); bush(12, -1, 1.25); bush(-2, -6, 0.9);
+
+  function rock(x, z, s){
+    const r = put(new THREE.Mesh(new THREE.DodecahedronGeometry(1.1*s, 0), mat(0x8a8f98, 0.95)), x, 0.7*s, z);
+    r.rotation.set(Math.random()*3, Math.random()*3, 0);
+    r.scale.y = 0.75;
+    col(x, z, 1.2*s);
+  }
+  rock(-11, -3, 1.3); rock(6, 10, 1.0); rock(0, -3, 0.8); rock(14, 3, 1.1);
+
+  // fallen log
+  const log = put(new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.85, 6.5, 12), mat(0x6b4a2b)), -3, 0.75, -11);
+  log.rotation.z = Math.PI/2; log.rotation.y = 0.5;
+  col(-4.4, -9.8, 1.2); col(-1.6, -12.2, 1.2);
+
+  // pond (visual only — walkable "shallow" edge look)
+  const pond = new THREE.Mesh(new THREE.CircleGeometry(3.4, 28),
+    new THREE.MeshStandardMaterial({ color: 0x3a7ba8, roughness: 0.25, metalness: 0.1 }));
+  pond.rotation.x = -Math.PI/2; pond.position.set(9, 0.02, -10); levelGroup.add(pond);
+
+  // dog house
+  const dh = put(new THREE.Mesh(new THREE.BoxGeometry(3, 2.2, 2.6), mat(0xa3502e)), -12, 1.1, 8);
+  dh.rotation.y = 0.6;
+  const roof = put(new THREE.Mesh(new THREE.ConeGeometry(2.5, 1.4, 4), mat(0x6b2f1a)), -12, 2.9, 8);
+  roof.rotation.y = 0.6 + Math.PI/4;
+  col(-12, 8, 2.2);
+
+  // tall grass tufts (no collider — you can hide IN them)
+  for (let i = 0; i < 26; i++){
+    const a = Math.random()*Math.PI*2, r = 4 + Math.random()*13;
+    const x = Math.cos(a)*r, z = Math.sin(a)*r;
+    const t = put(new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.5 + Math.random(), 5), mat(0x59a84a)), x, 0.8, z);
+    t.rotation.y = Math.random()*3;
+  }
+  // flowers
+  for (let i = 0; i < 14; i++){
+    const a = Math.random()*Math.PI*2, r = 3 + Math.random()*14;
+    put(new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), mat([0xff6b9a, 0xffd24a, 0xff8a5f][i%3], 0.6)),
+      Math.cos(a)*r, 0.55, Math.sin(a)*r);
+  }
+}
+
+const HIDER_SPAWNS = [[-14,-10],[14,-11],[-15,9],[15,10],[0,15],[-8,14],[8,15],[0,-15]];
+const SEEKER_SPAWN = [0, -2];
+
+// ============================================================
+//  NETWORK (PeerJS star: host relays)
+// ============================================================
+let peer = null, hostConn = null, conns = [];   // conns = host's guest connections
+let isHost = false, solo = false, myId = null, myName = 'player';
+let G = { phase: 'home', players: [], hideEnds: 0, seekStart: 0, foundOrder: [] };
+const chars = {};    // id -> Character
+const me = () => chars[myId];
+const myRole = () => { const p = G.players.find(p => p.id === myId); return p ? p.role : null; };
+
+function makeCode(){
+  const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let s = ''; for (let i = 0; i < 4; i++) s += A[Math.floor(Math.random()*A.length)];
+  return s;
+}
+
+function hostGame(){
+  myName = ($('nm').value.trim() || 'SEEKER').toUpperCase();
+  const code = makeCode();
+  peer = new Peer(PEER_PREFIX + code);
+  $('homeerr').textContent = 'creating room…';
+  peer.on('open', () => {
+    isHost = true; myId = 'p1';
+    G.players = [{ id: 'p1', name: myName, role: 'seeker' }];
+    $('codelbl').textContent = code;
+    $('home').style.display = 'none';
+    $('lobby').style.display = 'flex';
+    $('startbtn').style.display = 'block';
+    $('lvlnote').textContent = '(you pick)';
+    renderLobby();
+  });
+  peer.on('connection', conn => {
+    conn.on('data', m => hostOnData(m, conn));
+    conn.on('close', () => hostDropGuest(conn));
+    conn.on('error', () => hostDropGuest(conn));
+  });
+  peer.on('error', e => {
+    if (e.type === 'unavailable-id'){ peer.destroy(); hostGame(); return; }
+    $('homeerr').textContent = 'network error: ' + e.type;
+  });
+}
+
+function joinGame(){
+  myName = ($('nm').value.trim() || 'HIDER').toUpperCase();
+  const code = $('joincode').value.trim().toUpperCase();
+  if (code.length !== 4){ $('homeerr').textContent = 'enter the 4-letter game code'; return; }
+  $('homeerr').textContent = 'connecting…';
+  peer = new Peer();
+  peer.on('open', () => {
+    hostConn = peer.connect(PEER_PREFIX + code, { reliable: true });
+    hostConn.on('open', () => hostConn.send({ t: 'hello', name: myName }));
+    hostConn.on('data', m => applyMsg(m));
+    hostConn.on('close', () => { if (G.phase !== 'home'){ alert('host left the game'); location.reload(); } });
+    hostConn.on('error', () => $('homeerr').textContent = 'connection failed');
+  });
+  peer.on('error', e => {
+    $('homeerr').textContent = e.type === 'peer-unavailable' ? 'no game with that code' : ('network error: ' + e.type);
+  });
+}
+
+function bcast(m, exceptConn){
+  for (const c of conns){ if (c !== exceptConn && c.open) c.send(m); }
+}
+
+function hostOnData(m, conn){
+  if (m.t === 'hello'){
+    if (G.phase !== 'lobby' && G.phase !== 'home'){ conn.send({ t: 'reject', reason: 'game already started' }); return; }
+    const id = 'p' + (G.players.length + 1 + conns.length*0);   // sequential ids
+    conn.__id = id;
+    conns.push(conn);
+    G.players.push({ id, name: (m.name || 'HIDER').substring(0,14), role: 'hider' });
+    conn.send({ t: 'welcome', you: id, code: $('codelbl').textContent });
+    bcast({ t: 'lobby', players: G.players, level: levelSel });
+    applyMsg({ t: 'lobby', players: G.players, level: levelSel });
+    return;
+  }
+  m.id = conn.__id;                       // stamp origin — never trust the sender's claim
+  applyMsg(m);
+  hostAuthority(m);
+  // relay gameplay traffic to the other guests
+  if (['st','pose','unpose','stroke','rescol','whistle','horn'].includes(m.t)) bcast(m, conn);
+}
+
+function hostDropGuest(conn){
+  const i = conns.indexOf(conn);
+  if (i >= 0) conns.splice(i, 1);
+  const id = conn.__id;
+  if (!id) return;
+  G.players = G.players.filter(p => p.id !== id);
+  if (chars[id]){ chars[id].dispose(); delete chars[id]; }
+  const msg = { t: 'left', id };
+  bcast(msg); applyMsg(msg);
+  if (G.phase === 'lobby'){ bcast({ t: 'lobby', players: G.players, level: levelSel }); renderLobby(); }
+  if (G.phase === 'hide' || G.phase === 'seek') hostCheckProgress();
+}
+
+// host-only rules: confirmations, air-horn tagging, phase changes
+const confirmedIds = new Set();
+function hostAuthority(m){
+  if (!isHost) return;
+  if (m.t === 'confirm' && G.phase === 'hide'){
+    confirmedIds.add(m.id);
+    bcast({ t: 'hstat', id: m.id, s: 'hidden' }); applyMsg({ t: 'hstat', id: m.id, s: 'hidden' });
+    hostCheckProgress();
+  }
+  if (m.t === 'unpose'){
+    confirmedIds.delete(m.id);
+    if (G.phase === 'hide'){ bcast({ t: 'hstat', id: m.id, s: 'hiding' }); applyMsg({ t: 'hstat', id: m.id, s: 'hiding' }); }
+  }
+  if (m.t === 'horn' && G.phase === 'seek'){
+    for (const p of G.players){
+      if (p.role !== 'hider') continue;
+      const c = chars[p.id];
+      if (!c || c.found) continue;
+      const dx = c.pos.x - m.x, dz = c.pos.z - m.z;
+      if (dx*dx + dz*dz <= HORN_RANGE*HORN_RANGE){
+        const fm = { t: 'found', id: p.id, ms: Date.now() - G.seekStart };
+        bcast(fm); applyMsg(fm);
+      }
+    }
+    hostCheckProgress();
+  }
+}
+function hostCheckProgress(){
+  const hiders = G.players.filter(p => p.role === 'hider');
+  if (G.phase === 'hide'){
+    if (hiders.length && hiders.every(p => confirmedIds.has(p.id))) hostStartSeek();
+  }
+  if (G.phase === 'seek'){
+    if (hiders.length && hiders.every(p => chars[p.id] && chars[p.id].found)){
+      const stats = G.foundOrder.map(f => ({ name: (G.players.find(p => p.id === f.id) || {name:'?'}).name, ms: f.ms }));
+      const om = { t: 'over', stats };
+      bcast(om); applyMsg(om);
+    }
+  }
+}
+function hostStartSeek(){
+  const m = { t: 'phase', p: 'seek' };
+  bcast(m); applyMsg(m);
+}
+
+// local action → apply + dispatch
+function act(m){
+  m.id = myId;
+  applyMsg(m);
+  if (solo){ hostAuthority(m); return; }
+  if (isHost){ hostAuthority(m); bcast(m); }
+  else if (hostConn && hostConn.open) hostConn.send(m);
+}
+
+// ============================================================
+//  MESSAGE APPLICATION (all peers)
+// ============================================================
+function applyMsg(m){
+  switch (m.t){
+    case 'welcome':
+      myId = m.you;
+      $('home').style.display = 'none';
+      $('lobby').style.display = 'flex';
+      $('codelbl').textContent = m.code;
+      $('lobbywait').textContent = 'waiting for the host to start…';
+      $('lvlnote').textContent = '(host picks)';
+      break;
+    case 'reject':
+      $('homeerr').textContent = m.reason;
+      break;
+    case 'lobby':
+      G.players = m.players;
+      if (m.level) setLevelSel(m.level, false);
+      renderLobby();
+      break;
+    case 'level':
+      setLevelSel(m.v, false);
+      break;
+    case 'start':
+      startMatch(m);
+      break;
+    case 'phase':
+      if (m.p === 'seek') enterSeek();
+      break;
+    case 'st': {
+      const c = chars[m.id];
+      if (c && m.id !== myId){
+        c.netT = { x: m.x, z: m.z, h: m.h || 0, yaw: m.yaw };
+        if (m.p){ if (c.anim !== m.p) c.setAnim(m.p); c.posed = m.p; }
+        else { c.posed = null; if (c.anim !== m.a) c.setAnim(m.a); }
+      }
+      break;
+    }
+    case 'pose': {
+      const c = chars[m.id];
+      if (c && m.id !== myId){
+        c.netT = { x: m.x, z: m.z, h: 0, yaw: m.yaw };
+        c.posed = m.pose; c.setAnim(m.pose);
+      }
+      break;
+    }
+    case 'unpose': {
+      const c = chars[m.id];
+      if (c && m.id !== myId){ c.posed = null; c.setAnim('idle'); }
+      break;
+    }
+    case 'stroke': {
+      const c = chars[m.id];
+      if (c && m.id !== myId) c.applyStroke(m.vi, m.c, m.r);
+      break;
+    }
+    case 'rescol': {
+      const c = chars[m.id];
+      if (c && m.id !== myId) c.resetColors();
+      break;
+    }
+    case 'whistle': {
+      const my = me();
+      if (my){
+        const d = Math.hypot(my.pos.x - m.x, my.pos.z - m.z);
+        let vol = Math.max(0.04, Math.min(1, 1 - d/30));
+        if (myRole() !== 'seeker') vol *= 0.35;              // loudest for the seeker
+        sndWhistle(vol, panTo(m.x, m.z));
+        if (myRole() === 'seeker') toast('you hear a whistle…');
+      }
+      break;
+    }
+    case 'horn': {
+      const my = me();
+      const d = my ? Math.hypot(my.pos.x - m.x, my.pos.z - m.z) : 10;
+      sndHorn(Math.max(0.15, Math.min(0.9, 1 - d/45)), panTo(m.x, m.z));
+      spawnRing(m.x, m.z);
+      break;
+    }
+    case 'hstat': setStatus(m.id, m.s); refreshRoster(); refreshSeekerWait(); break;
+    case 'found': {
+      const c = chars[m.id];
+      if (c && !c.found){
+        c.setFound();
+        G.foundOrder.push({ id: m.id, ms: m.ms });
+        setStatus(m.id, 'found');
+        sndFound();
+        const nm = (G.players.find(p => p.id === m.id) || {name:'?'}).name;
+        toast('📣 ' + nm + ' WAS FOUND!');
+        if (m.id === myId){ toast('you were found — you can roam as a ghost'); exitPoseUI(); refreshVisibility(); }
+        refreshRoster();
+      }
+      break;
+    }
+    case 'over': showOver(m.stats); break;
+    case 'tolobby': backToLobby(); break;
+    case 'left': {
+      G.players = G.players.filter(p => p.id !== m.id);
+      if (chars[m.id]){ chars[m.id].dispose(); delete chars[m.id]; }
+      renderLobby(); refreshRoster();
+      break;
+    }
+  }
+}
+
+function panTo(x, z){
+  // stereo pan from the camera's point of view
+  const cr = new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()), Y_AXIS).normalize();
+  const to = new THREE.Vector3(x - camera.position.x, 0, z - camera.position.z).normalize();
+  return Math.max(-1, Math.min(1, -cr.dot(to)));
+}
+
+// ============================================================
+//  MATCH FLOW
+// ============================================================
+const statusById = {};   // id -> 'hiding' | 'hidden' | 'found'
+function setStatus(id, s){ statusById[id] = s; }
+
+let levelSel = 'picnic';
+function setLevelSel(v, announce){
+  levelSel = v;
+  $('lvl-picnic').classList.toggle('sel', v === 'picnic');
+  $('lvl-backyard').classList.toggle('sel', v === 'backyard');
+  if (announce && isHost) bcast({ t: 'level', v });
+}
+
+function renderLobby(){
+  const ul = $('plist'); ul.innerHTML = '';
+  for (const p of G.players){
+    const li = document.createElement('li');
+    li.innerHTML = '<span>' + p.name + (p.id === myId ? ' (you)' : '') + '</span><span class="role ' +
+      p.role + '">' + p.role.toUpperCase() + '</span>';
+    ul.appendChild(li);
+  }
+  if (isHost){
+    const n = G.players.length;
+    $('startbtn').disabled = n < 2;
+    $('lobbywait').textContent = n < 2 ? 'waiting for at least 1 hider to join…' : '';
+  }
+}
+
+function hostStart(){
+  const seats = G.players.map((p, i) => {
+    const sp = p.role === 'seeker' ? SEEKER_SPAWN : HIDER_SPAWNS[(i-1) % HIDER_SPAWNS.length];
+    return { id: p.id, name: p.name, role: p.role, x: sp[0], z: sp[1] };
+  });
+  const m = { t: 'start', level: levelSel, seats };
+  bcast(m); applyMsg(m);
+}
+
+function startMatch(m){
+  buildLevel(m.level);
+  for (const id in chars){ chars[id].dispose(); delete chars[id]; }
+  G.players = m.seats.map(s => ({ id: s.id, name: s.name, role: s.role }));
+  G.foundOrder = [];
+  confirmedIds.clear();
+  for (const s of m.seats){
+    const c = new Character(s.id, s.name, s.role);
+    c.pos.set(s.x, 0, s.z);
+    c.yaw = Math.atan2(-s.x, -s.z);                    // face the middle
+    chars[s.id] = c;
+    setStatus(s.id, s.role === 'hider' ? 'hiding' : '-');
+  }
+  G.phase = 'hide';
+  G.hideEnds = performance.now() + HIDE_TIME*1000;
+  $('lobby').style.display = 'none';
+  $('over').style.display = 'none';
+  $('hud').style.display = 'block';
+  const my = me();
+  if (my){
+    controls.target.set(my.pos.x, my.pos.y + 1.1, my.pos.z);
+    camera.position.set(my.pos.x + 4, 4, my.pos.z + 6);
+  }
+  setupHudForPhase();
+  refreshVisibility();
+  refreshRoster();
+  toast(myRole() === 'seeker'
+    ? 'hiders are hiding — paint yourself while you wait!'
+    : 'find a spot, pick a pose, paint yourself to blend in, then CONFIRM!');
+}
+
+function enterSeek(){
+  G.phase = 'seek';
+  G.seekStart = Date.now();
+  const my = me();
+  if (my && my.posed == null && myRole() === 'hider') { /* caught mid-move — stay walkable */ }
+  setupHudForPhase();
+  refreshVisibility();
+  sndHorn(0.5, 0);
+  toast(myRole() === 'seeker' ? 'GO! find the hiders — blast the horn (E) when close!' : 'the seeker is coming…');
+}
+
+function showOver(stats){
+  G.phase = 'over';
+  $('hud').style.display = 'none';
+  $('over').style.display = 'flex';
+  sndWin();
+  const ul = $('results'); ul.innerHTML = '';
+  stats.forEach((s, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = '<span>' + (i+1) + '. ' + s.name + '</span><span class="role hider">' +
+      (s.ms/1000).toFixed(1) + 's</span>';
+    ul.appendChild(li);
+  });
+  $('againbtn').style.display = isHost ? 'block' : 'none';
+  $('overwait').textContent = isHost ? '' : 'waiting for the host…';
+}
+
+function backToLobby(){
+  for (const id in chars){ chars[id].dispose(); delete chars[id]; }
+  G.phase = 'lobby';
+  G.foundOrder = []; confirmedIds.clear();
+  $('over').style.display = 'none';
+  $('hud').style.display = 'none';
+  $('lobby').style.display = 'flex';
+  renderLobby();
+}
+
+// visibility rules: seekers can't see hiders during the hide phase
+function refreshVisibility(){
+  const iAmSeeker = myRole() === 'seeker';
+  for (const p of G.players){
+    const c = chars[p.id]; if (!c) continue;
+    let vis = true, tag = true;
+    if (G.phase === 'hide' && iAmSeeker && p.role === 'hider') vis = false;
+    if (iAmSeeker && p.role === 'hider' && !c.found) tag = false;   // no name tags to give hiders away
+    if (p.id === myId) { vis = true; tag = false; }                  // never block your own view
+    c.group.visible = vis;
+    c.tag.visible = tag;
+  }
+}
+
+// ============================================================
+//  HUD
+// ============================================================
+function setupHudForPhase(){
+  const role = myRole();
+  $('rolelbl').textContent = role === 'seeker' ? 'SEEKER' : 'HIDER';
+  $('rolelbl').className = 'r ' + role;
+  const poseBtns = document.querySelectorAll('.act[data-pose]');
+  const isHider = role === 'hider';
+  poseBtns.forEach(b => b.style.display = isHider ? '' : 'none');
+  $('whistlebtn').style.display = isHider && G.phase === 'seek' ? '' : 'none';
+  $('hornbtn').style.display = role === 'seeker' && G.phase === 'seek' ? '' : 'none';
+  $('skipbtn').style.display = solo && G.phase === 'hide' ? '' : 'none';
+  $('confirmbtn').style.display = 'none';
+  $('releasebtn').style.display = 'none';
+  if (G.phase === 'hide'){
+    $('phaselbl').textContent = 'HIDE PHASE';
+    $('rolehint').textContent = role === 'seeker'
+      ? 'eyes closed! paint your mesh while the hiders hide.'
+      : 'WASD move · SPACE jump · pick a pose to lock in · paint · CONFIRM';
+    if (role === 'seeker') showPaintbox(true);
+  } else if (G.phase === 'seek'){
+    $('phaselbl').textContent = 'SEEK PHASE';
+    $('rolehint').textContent = role === 'seeker'
+      ? 'find the painted hiders! E = air horn tag (' + HORN_RANGE + 'm)'
+      : 'stay still… or Q whistle to taunt. you may relocate & re-pose!';
+    if (role === 'seeker') showPaintbox(false);
+    refreshSeekerWait();
+  }
+  // hider carried a locked pose across the phase change — keep its controls up
+  const my = me();
+  if (role === 'hider' && my && my.posed && !my.found){
+    $('releasebtn').style.display = '';
+    showPaintbox(true);
+  }
+  refreshRoster();
+}
+
+function refreshSeekerWait(){
+  if (G.phase !== 'hide' || myRole() !== 'seeker') { $('centerhint').style.display = 'none'; return; }
+  const hiders = G.players.filter(p => p.role === 'hider');
+  const done = hiders.filter(p => statusById[p.id] === 'hidden').length;
+  $('centerhint').style.display = 'block';
+  $('centerhint').textContent = 'HIDDEN: ' + done + ' / ' + hiders.length;
+}
+
+function refreshRoster(){
+  const el = $('rosterrows'); el.innerHTML = '';
+  for (const p of G.players){
+    const d = document.createElement('div');
+    let st = '';
+    if (p.role === 'hider'){
+      const s = statusById[p.id];
+      if (G.phase === 'hide') st = s === 'hidden' ? '<span class="st">HIDDEN</span>' : '<span class="st" style="color:#9fb0c6">hiding…</span>';
+      else st = (chars[p.id] && chars[p.id].found) ? '<span class="st found">FOUND</span>' : '<span class="st">hidden</span>';
+    } else st = '<span class="st" style="color:#ffb26b">SEEKER</span>';
+    d.innerHTML = p.name + (p.id === myId ? ' ★' : '') + st;
+    el.appendChild(d);
+  }
+}
+
+function toast(txt){
+  const d = document.createElement('div');
+  d.className = 'toast'; d.textContent = txt;
+  $('toasts').appendChild(d);
+  setTimeout(() => d.remove(), 4200);
+}
+
+// horn blast ring
+const rings = [];
+function spawnRing(x, z){
+  const r = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.55, 40),
+    new THREE.MeshBasicMaterial({ color: 0xffb26b, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+  r.rotation.x = -Math.PI/2; r.position.set(x, 0.06, z);
+  scene.add(r); rings.push({ m: r, t: 0 });
+}
+function updateRings(dt){
+  for (let i = rings.length-1; i >= 0; i--){
+    const R = rings[i]; R.t += dt;
+    const s = 1 + R.t*9;
+    R.m.scale.set(s, s, 1);
+    R.m.material.opacity = Math.max(0, 0.9 - R.t*1.4);
+    if (R.t > 0.7){ scene.remove(R.m); R.m.geometry.dispose(); R.m.material.dispose(); rings.splice(i,1); }
+  }
+}
+
+// ============================================================
+//  INPUT / LOCAL PLAYER
+// ============================================================
+const keys = {};
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  keys[e.code] = true;
+  if (G.phase !== 'hide' && G.phase !== 'seek') return;
+  if (e.code === 'Space') e.preventDefault();
+  const my = me(); if (!my) return;
+  const role = myRole();
+  if (role === 'hider' && !my.found){
+    const pi = ['Digit1','Digit2','Digit3','Digit4','Digit5'].indexOf(e.code);
+    if (pi >= 0) lockPose(HIDE_POSES[pi]);
+    if (e.code === 'KeyR') releasePose();
+    if (e.code === 'Enter') confirmHide();
+    if (e.code === 'KeyQ') doWhistle();
+  }
+  if (role === 'seeker' && e.code === 'KeyE') doHorn();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+let lastWhistle = -99, lastHorn = -99;
+function doWhistle(){
+  if (G.phase !== 'seek' || myRole() !== 'hider') return;
+  const my = me(); if (!my || my.found) return;
+  const now = performance.now()/1000;
+  if (now - lastWhistle < WHISTLE_CD) return;
+  lastWhistle = now;
+  act({ t: 'whistle', x: my.pos.x, z: my.pos.z });
+}
+function doHorn(){
+  if (G.phase !== 'seek' || myRole() !== 'seeker') return;
+  const my = me(); if (!my) return;
+  const now = performance.now()/1000;
+  if (now - lastHorn < HORN_CD) return;
+  lastHorn = now;
+  act({ t: 'horn', x: my.pos.x, z: my.pos.z });
+}
+
+function canMove(){
+  const my = me(); if (!my || my.posed) return false;
+  if (myRole() === 'seeker') return G.phase === 'seek';
+  return G.phase === 'hide' || G.phase === 'seek';
+}
+
+function lockPose(pose){
+  const my = me(); if (!my || my.found) return;
+  if (G.phase !== 'hide' && G.phase !== 'seek') return;
+  if (my.pos.y > 0.02) return;                       // land first
+  my.posed = pose;
+  my.setAnim(pose);
+  act({ t: 'pose', pose, x: my.pos.x, z: my.pos.z, yaw: my.yaw });
+  document.querySelectorAll('.act[data-pose]').forEach(b => b.classList.toggle('on', b.dataset.pose === pose));
+  $('confirmbtn').style.display = (G.phase === 'hide' && !my.confirmed) ? '' : 'none';
+  $('releasebtn').style.display = '';
+  showPaintbox(true);
+}
+function releasePose(){
+  const my = me(); if (!my || !my.posed) return;
+  my.posed = null; my.confirmed = false;
+  my.setAnim('idle');
+  act({ t: 'unpose' });
+  exitPoseUI();
+}
+function exitPoseUI(){
+  document.querySelectorAll('.act[data-pose]').forEach(b => b.classList.remove('on'));
+  $('confirmbtn').style.display = 'none';
+  $('releasebtn').style.display = 'none';
+  if (!(myRole() === 'seeker' && G.phase === 'hide')) showPaintbox(false);
+}
+function confirmHide(){
+  const my = me(); if (!my || !my.posed || G.phase !== 'hide') return;
+  my.confirmed = true;
+  act({ t: 'confirm' });
+  $('confirmbtn').style.display = 'none';
+  toast('hidden! (R to release and move again)');
+}
+
+// camera-relative movement
+const mvDir = new THREE.Vector3();
+function updateLocal(dt){
+  const my = me(); if (!my) return;
+  if (canMove()){
+    mvDir.set(0,0,0);
+    if (keys['KeyW'] || keys['ArrowUp']) mvDir.z -= 1;
+    if (keys['KeyS'] || keys['ArrowDown']) mvDir.z += 1;
+    if (keys['KeyA'] || keys['ArrowLeft']) mvDir.x -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) mvDir.x += 1;
+    const moving = mvDir.lengthSq() > 0;
+    if (moving){
+      const az = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
+      mvDir.normalize().applyAxisAngle(Y_AXIS, az);
+      my.pos.x += mvDir.x * WALK_SPEED * dt;
+      my.pos.z += mvDir.z * WALK_SPEED * dt;
+      let ty = Math.atan2(mvDir.x, mvDir.z), dyaw = ty - my.yaw;
+      while (dyaw >  Math.PI) dyaw -= 2*Math.PI;
+      while (dyaw < -Math.PI) dyaw += 2*Math.PI;
+      my.yaw += dyaw * Math.min(1, dt*11);
+      collide(my);
+    }
+    if ((keys['Space']) && my.pos.y <= 0.001 && !my.airborne){ my.vy = JUMP_V; my.airborne = true; sndPop(); }
+    if (my.airborne || my.pos.y > 0){
+      my.vy -= GRAVITY * dt;
+      my.pos.y = Math.max(0, my.pos.y + my.vy * dt);
+      if (my.pos.y === 0){ my.airborne = false; my.vy = 0; }
+    }
+    my.setAnim(moving ? 'walk' : 'idle');
+  }
+  // follow camera: shift camera by the target's motion
+  const tx = my.pos.x, ty2 = my.pos.y + 1.1, tz = my.pos.z;
+  const dx = tx - controls.target.x, dy = ty2 - controls.target.y, dz = tz - controls.target.z;
+  controls.target.set(tx, ty2, tz);
+  camera.position.x += dx; camera.position.y += dy; camera.position.z += dz;
+}
+
+function collide(c){
+  for (const o of colliders){
+    const dx = c.pos.x - o.x, dz = c.pos.z - o.z;
+    const d2 = dx*dx + dz*dz, min = o.r + 0.35;
+    if (d2 < min*min && d2 > 1e-9){
+      const d = Math.sqrt(d2);
+      c.pos.x = o.x + dx/d*min;
+      c.pos.z = o.z + dz/d*min;
+    }
+  }
+  const rr = Math.hypot(c.pos.x, c.pos.z);
+  if (rr > BOUND_R){ c.pos.x *= BOUND_R/rr; c.pos.z *= BOUND_R/rr; }
+}
+
+// periodic state broadcast
+let netAcc = 0;
+function netTick(dt){
+  if (solo || G.phase === 'lobby' || G.phase === 'home' || G.phase === 'over') return;
+  netAcc += dt;
+  if (netAcc < 1/NET_HZ) return;
+  netAcc = 0;
+  const my = me(); if (!my) return;
+  act({ t: 'st', x: +my.pos.x.toFixed(2), z: +my.pos.z.toFixed(2), h: +my.pos.y.toFixed(2),
+        yaw: +my.yaw.toFixed(2), a: my.anim, p: my.posed });
+}
+
+// ============================================================
+//  PAINTING (own character only; strokes replicated as {vi,c,r})
+// ============================================================
+let brushColor = '#ff5566', brushR = 0.14, painting = false;
+const rcaster = new THREE.Raycaster();
+const _ndc = new THREE.Vector2(), _vtx = new THREE.Vector3();
+let _wpc = null;
+
+function canPaint(){
+  const my = me(); if (!my || my.found) return false;
+  if (myRole() === 'seeker') return G.phase === 'hide';
+  return !!my.posed;
+}
+function showPaintbox(on){
+  $('paintbox').style.display = on ? 'block' : 'none';
+  if (on){
+    controls.mouseButtons.LEFT = -1;                       // left = paint
+    controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;      // right = orbit
+    renderer.domElement.style.cursor = 'crosshair';
+  } else {
+    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    controls.mouseButtons.RIGHT = -1;
+    renderer.domElement.style.cursor = '';
+    painting = false;
+  }
+}
+function paintAt(ev){
+  const my = me(); if (!my || !my.mesh || !canPaint()) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  _ndc.x =  ((ev.clientX - rect.left) / rect.width)  * 2 - 1;
+  _ndc.y = -((ev.clientY - rect.top)  / rect.height) * 2 + 1;
+  rcaster.setFromCamera(_ndc, camera);
+  const O = rcaster.ray.origin, D = rcaster.ray.direction;
+  const mesh = my.mesh, g = mesh.geometry, n = g.attributes.position.count;
+  if (!_wpc || _wpc.length !== n*3) _wpc = new Float32Array(n*3);
+  const skinned = mesh.isSkinnedMesh && g.attributes.skinIndex && typeof mesh.boneTransform === 'function';
+  for (let i = 0; i < n; i++){
+    if (skinned) mesh.boneTransform(i, _vtx);
+    else _vtx.fromBufferAttribute(g.attributes.position, i);
+    _vtx.applyMatrix4(mesh.matrixWorld);
+    _wpc[i*3] = _vtx.x; _wpc[i*3+1] = _vtx.y; _wpc[i*3+2] = _vtx.z;
+  }
+  let minPerp = Infinity, bestT = Infinity, ci = -1;
+  const perp = new Float32Array(n), tt = new Float32Array(n);
+  for (let i = 0; i < n; i++){
+    const px = _wpc[i*3]-O.x, py = _wpc[i*3+1]-O.y, pz = _wpc[i*3+2]-O.z;
+    const t = px*D.x + py*D.y + pz*D.z;
+    tt[i] = t;
+    if (t < 0){ perp[i] = Infinity; continue; }
+    const cx = px - D.x*t, cy = py - D.y*t, cz = pz - D.z*t;
+    perp[i] = Math.sqrt(cx*cx + cy*cy + cz*cz);
+    if (perp[i] < minPerp) minPerp = perp[i];
+  }
+  if (minPerp > 0.25) return;
+  const band = minPerp + 0.05;
+  for (let i = 0; i < n; i++) if (perp[i] <= band && tt[i] < bestT){ bestT = tt[i]; ci = i; }
+  if (ci < 0) return;
+  const my2 = me();
+  my2.applyStroke(ci, brushColor, brushR);
+  act({ t: 'stroke', vi: ci, c: brushColor, r: brushR });
+}
+renderer.domElement.addEventListener('pointerdown', e => {
+  audio();
+  if (e.button === 0 && canPaint()){ painting = true; paintAt(e); }
+});
+renderer.domElement.addEventListener('pointermove', e => { if (painting && canPaint()) paintAt(e); });
+addEventListener('pointerup', () => { painting = false; });
+
+$('pcol').addEventListener('input', e => brushColor = e.target.value);
+$('prad').addEventListener('input', e => { brushR = parseFloat(e.target.value); $('pradv').textContent = brushR.toFixed(2); });
+$('preset').addEventListener('click', () => { const my = me(); if (my){ my.resetColors(); act({ t: 'rescol' }); } });
+
+// ============================================================
+//  SOLO TEST MODE — you seek 3 painted bots
+// ============================================================
+function startSolo(){
+  solo = true; isHost = true; myId = 'p1';
+  myName = ($('nm').value.trim() || 'SEEKER').toUpperCase();
+  G.players = [
+    { id: 'p1', name: myName, role: 'seeker' },
+    { id: 'b1', name: 'BOT·MELON', role: 'hider' },
+    { id: 'b2', name: 'BOT·DOG', role: 'hider' },
+    { id: 'b3', name: 'BOT·SNEAK', role: 'hider' },
+  ];
+  const seats = G.players.map((p, i) => {
+    const sp = p.role === 'seeker' ? SEEKER_SPAWN : HIDER_SPAWNS[(i*2+1) % HIDER_SPAWNS.length];
+    return { id: p.id, name: p.name, role: p.role, x: sp[0], z: sp[1] };
+  });
+  $('home').style.display = 'none';
+  startMatch({ t: 'start', level: levelSel, seats });
+  // bots pick a spot near scenery, pose and camo-paint themselves
+  const pal = LEVELS[levelSel].palette;
+  let bi = 0;
+  for (const p of G.players){
+    if (p.role !== 'hider') continue;
+    const c = chars[p.id];
+    const spot = colliders[(bi*2 + 1) % colliders.length];
+    const a = Math.random()*Math.PI*2;
+    c.pos.set(spot.x + Math.cos(a)*(spot.r+0.6), 0, spot.z + Math.sin(a)*(spot.r+0.6));
+    collide(c);
+    c.yaw = Math.random()*Math.PI*2;
+    const pose = HIDE_POSES[1 + (bi % (HIDE_POSES.length-1))];
+    c.posed = pose; c.setAnim(pose);
+    const nv = c.mesh ? c.mesh.geometry.attributes.position.count : 0;
+    for (let s = 0; s < 9 && nv; s++)
+      c.applyStroke(Math.floor(Math.random()*nv), pal[Math.floor(Math.random()*pal.length)], 0.12 + Math.random()*0.2);
+    confirmedIds.add(p.id); setStatus(p.id, 'hidden');
+    c.__bot = true; bi++;
+  }
+  refreshRoster(); refreshSeekerWait(); refreshVisibility();
+  toast('SOLO TEST — paint yourself, then START SEEKING');
+}
+let botWhistleT = 6;
+function updateBots(dt){
+  if (!solo || G.phase !== 'seek') return;
+  botWhistleT -= dt;
+  if (botWhistleT <= 0){
+    botWhistleT = 7 + Math.random()*9;
+    const hidden = Object.values(chars).filter(c => c.__bot && !c.found);
+    if (hidden.length){
+      const b = hidden[Math.floor(Math.random()*hidden.length)];
+      applyMsg({ t: 'whistle', id: b.id, x: b.pos.x, z: b.pos.z });
+    }
+  }
+}
+
+// ============================================================
+//  UI WIRING
+// ============================================================
+$('hostbtn').addEventListener('click', () => { audio(); hostGame(); });
+$('joinbtn').addEventListener('click', () => { audio(); joinGame(); });
+$('solobtn').addEventListener('click', () => { audio(); startSolo(); });
+$('startbtn').addEventListener('click', hostStart);
+$('againbtn').addEventListener('click', () => {
+  if (solo){ location.reload(); return; }
+  const m = { t: 'tolobby' }; bcast(m); applyMsg(m);
+});
+$('lvl-picnic').addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel('picnic', true); });
+$('lvl-backyard').addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel('backyard', true); });
+document.querySelectorAll('.act[data-pose]').forEach(b =>
+  b.addEventListener('click', () => lockPose(b.dataset.pose)));
+$('releasebtn').addEventListener('click', releasePose);
+$('confirmbtn').addEventListener('click', confirmHide);
+$('whistlebtn').addEventListener('click', doWhistle);
+$('hornbtn').addEventListener('click', doHorn);
+$('skipbtn').addEventListener('click', () => { if (solo && G.phase === 'hide') hostStartSeek(); });
+
+// ============================================================
+//  MAIN LOOP
+// ============================================================
+const clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (ready && (G.phase === 'hide' || G.phase === 'seek')){
+    updateLocal(dt);
+    for (const id in chars) chars[id].update(dt);
+    netTick(dt);
+    updateBots(dt);
+    updateRings(dt);
+    // hide-phase countdown (host enforces; everyone displays)
+    if (G.phase === 'hide'){
+      const left = Math.max(0, (G.hideEnds - performance.now())/1000);
+      $('timerlbl').textContent = Math.floor(left/60) + ':' + String(Math.floor(left%60)).padStart(2,'0');
+      if (isHost && left <= 0) hostStartSeek();
+    } else {
+      const el = (Date.now() - G.seekStart)/1000;
+      $('timerlbl').textContent = Math.floor(el/60) + ':' + String(Math.floor(el%60)).padStart(2,'0');
+    }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
