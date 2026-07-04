@@ -181,6 +181,7 @@
     <div class="row"><span>COLOR</span><input type="color" id="pcol" value="#ff5566"></div>
     <div class="row"><span>RADIUS</span><span id="pradv">0.14</span></div>
     <input type="range" id="prad" min="0.03" max="0.5" step="0.01" value="0.14">
+    <button class="sm" id="eyedrop">🎯 EYEDROPPER — match a surface</button>
     <button class="sm" id="preset">RESET COLORS</button>
     <h3 style="margin-top:12px">AESTHETICS</h3>
     <div class="row"><span>REFLECTIVITY</span><span id="metv">0.00</span></div>
@@ -210,7 +211,9 @@ const WALK_SPEED = 3.6;
 const JUMP_V = 6.6, GRAVITY = 14;   // beefy jump — enough to hop onto scenery
 const STEP_UP = 0.55;               // tallest ledge you can walk straight up
 const MAX_SLOPE = 55;               // degrees — anything steeper is a wall
-const BOUND_R = 19;                 // playable radius
+const BOUND_R = 19;                 // default playable radius (overridable per level via LEVELS.bound)
+let arenaR = BOUND_R;               // the current level's playable radius
+const FALL_Y = -8;                  // drop below this and you respawn at the origin
 const HIDE_TIME = 90;               // seconds to hide
 const HORN_LEN = 7.5;               // directional air-horn beam length
 const HORN_CD = 2.5, WHISTLE_CD = 4;
@@ -307,8 +310,10 @@ const ANIM_BONES = [
 const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 const NEEDED = ANIM_BONES.concat(['toe.L','toe.R','heel.02.L','heel.02.R','hand.L','hand.R']);
 
-new THREE.GLTFLoader().load('rigman.glb', onModel, undefined,
-  e => { $('homeerr').textContent = 'could not load rigman.glb — keep it next to this file'; console.error(e); });
+new THREE.GLTFLoader().load('rigmanHD.glb', onModel, undefined,
+  e => { $('homeerr').textContent = 'could not load rigmanHD.glb — keep it next to this file'; console.error(e); });
+
+const vcount = m => m.geometry.attributes.position.count;
 
 // preload the breakfast table prop (cloned into the BREAKFAST level)
 let tableProto = null;
@@ -324,7 +329,8 @@ function onModel(gltf){
   masterModel.traverse(o => {
     if (o.isMesh){ o.castShadow = true; o.frustumCulled = false; }
     if (o.isSkinnedMesh){
-      masterMesh = o;
+      // pick the densest skinned mesh (auto-upgrades if the HD mesh gets skin weights)
+      if (!masterMesh || vcount(o) > vcount(masterMesh)) masterMesh = o;
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const m of mats){ if (m){ m.skinning = true; m.needsUpdate = true; } }
     }
@@ -589,8 +595,12 @@ class Character {
     this.bones = {}; this.mesh = null;
     this.model.traverse(o => {
       if (o.isBone) { const key = NEEDED.find(nm => norm(nm) === norm(o.name)); if (key) this.bones[key] = o; }
-      if (o.isSkinnedMesh) this.mesh = o;
-      if (o.isMesh){ o.castShadow = true; o.frustumCulled = false; }
+      if (o.isSkinnedMesh){
+        if (!this.mesh || vcount(o) > vcount(this.mesh)) this.mesh = o;   // densest skinned mesh
+        o.castShadow = true; o.frustumCulled = false;
+      } else if (o.isMesh){
+        o.visible = false;   // hide any un-rigged mesh (e.g. the HD 'flat' surface) so it can't float in bind pose
+      }
     });
     if (this.mesh){
       this.mesh.geometry = this.mesh.geometry.clone();      // per-player paint surface
@@ -736,7 +746,7 @@ const LEVELS = {
     palette: ['#d94f3a','#f2e3c6','#e8b26a','#6b3f23','#ffd24a','#ff9fd0','#7ec850','#e8e2d2'] },
   backyard: { label: 'BACKYARD WILDS', sky: 0xa8d8ff, fog: [0xa8d8ff, 32, 95],
     palette: ['#3f7d2e','#6b4a2b','#8a8f98','#2e6b4f','#59a84a','#7a9b5c','#4d3a26'] },
-  breakfast: { label: 'BREAKFAST', sky: 0xffe9c9, fog: [0xffe9c9, 40, 110],
+  breakfast: { label: 'BREAKFAST', sky: 0xffe9c9, fog: [0xffe9c9, 60, 180], bound: 44,
     palette: ['#571c03','#8a5a2e','#c9a05a','#e8d8b0','#f0eef0','#a2432a','#3a241a','#f5b731'] },
 };
 
@@ -760,8 +770,13 @@ function buildLevel(name){
   levelGroup = new THREE.Group(); scene.add(levelGroup);
   colliders = []; levelName = name;
   const L = LEVELS[name];
+  arenaR = L.bound || BOUND_R;
   scene.background = new THREE.Color(L.sky);
   scene.fog = new THREE.Fog(L.fog[0], L.fog[1], L.fog[2]);
+  // fit the sun's shadow frustum to the arena so shadows aren't clipped on big levels
+  const sc = sun.shadow.camera;
+  sc.left = -(arenaR+5); sc.right = arenaR+5; sc.top = arenaR+5; sc.bottom = -(arenaR+5);
+  sc.far = Math.max(60, arenaR*2.6); sc.updateProjectionMatrix();
   if (name === 'picnic') buildPicnic();
   else if (name === 'breakfast') buildBreakfast();
   else buildBackyard();
@@ -769,7 +784,7 @@ function buildLevel(name){
   if (name !== 'breakfast'){
     const pm = mat(name === 'picnic' ? 0xb0937a : 0x7a6248);
     for (let a = 0; a < Math.PI*2; a += Math.PI/16){
-      const p = put(new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.6, 0.25), pm), Math.cos(a)*(BOUND_R+0.8), 0.8, Math.sin(a)*(BOUND_R+0.8));
+      const p = put(new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.6, 0.25), pm), Math.cos(a)*(arenaR+0.8), 0.8, Math.sin(a)*(arenaR+0.8));
       p.rotation.y = -a;
     }
   }
@@ -932,7 +947,7 @@ function buildBreakfast(){
   // scale so the tabletop's short side covers the play circle, then centre & drop it to y=0
   let box = new THREE.Box3().setFromObject(topMesh);
   let size = box.getSize(new THREE.Vector3());
-  const S = (BOUND_R + 3) / (Math.min(size.x, size.z) / 2 || 1);
+  const S = (arenaR + 4) / (Math.min(size.x, size.z) / 2 || 1);
   t.scale.setScalar(S);
   t.updateMatrixWorld(true);
   box = new THREE.Box3().setFromObject(topMesh);
@@ -1277,9 +1292,10 @@ function renderLobby(){
 
 function hostStart(){
   let hi = 0;   // hider spawn counter — after rotation the seeker can sit anywhere in the list
+  const f = (LEVELS[levelSel].bound || BOUND_R) / BOUND_R;   // spread spawns across bigger arenas
   const seats = G.players.map(p => {
     const sp = p.role === 'seeker' ? SEEKER_SPAWN : HIDER_SPAWNS[(hi++) % HIDER_SPAWNS.length];
-    return { id: p.id, name: p.name, role: p.role, x: sp[0], z: sp[1] };
+    return { id: p.id, name: p.name, role: p.role, x: sp[0]*f, z: sp[1]*f };
   });
   const m = { t: 'start', level: levelSel, seats };
   bcast(m); applyMsg(m);
@@ -1555,6 +1571,11 @@ function confirmHide(){
 const mvDir = new THREE.Vector3();
 function updateLocal(dt){
   const my = me(); if (!my) return;
+  if (my.pos.y < FALL_Y){                     // fell off the world → respawn at the origin
+    my.pos.set(0, groundAt(0, 0).y, 0);
+    my.vy = 0; my.airborne = false;
+    toast('you fell — respawned at the centre');
+  }
   if (canMove()){
     mvDir.set(0,0,0);
     if (keys['KeyW'] || keys['ArrowUp']) mvDir.z -= 1;
@@ -1598,7 +1619,7 @@ function updateLocal(dt){
 function collide(c){
   // world bounds only — scenery blocking/climbing is handled by the slope logic
   const rr = Math.hypot(c.pos.x, c.pos.z);
-  if (rr > BOUND_R){ c.pos.x *= BOUND_R/rr; c.pos.z *= BOUND_R/rr; }
+  if (rr > arenaR){ c.pos.x *= arenaR/rr; c.pos.z *= arenaR/rr; }
 }
 
 // ---- climbable ground: raycast down onto the level meshes ----
@@ -1664,6 +1685,7 @@ function showPaintbox(on){
     controls.mouseButtons.RIGHT = -1;
     renderer.domElement.style.cursor = '';
     painting = false;
+    if (typeof sampleMode !== 'undefined' && sampleMode) setSampleMode(false);
   }
 }
 function paintAt(ev){
@@ -1703,6 +1725,7 @@ function paintAt(ev){
 }
 renderer.domElement.addEventListener('pointerdown', e => {
   audio();
+  if (e.button === 0 && sampleMode){ pickFromScene(e); setSampleMode(false); return; }
   if (e.button === 0 && canPaint()){ painting = true; paintAt(e); }
 });
 renderer.domElement.addEventListener('pointermove', e => { if (painting && canPaint()) paintAt(e); });
@@ -1734,6 +1757,55 @@ $('rou').addEventListener('input', e => { matState.r = parseFloat(e.target.value
 $('ambc').addEventListener('input', e => { matState.a = e.target.value; pushMat(); });
 $('glo').addEventListener('input', e => { matState.g = parseFloat(e.target.value); $('glov').textContent = matState.g.toFixed(2); pushMat(); });
 
+// ---- eyedropper: click any surface to adopt its colour AND its material finish ----
+let sampleMode = false;
+function setSampleMode(on){
+  sampleMode = on;
+  $('eyedrop').style.background = on ? '#2f74d0' : '';
+  $('eyedrop').style.color = on ? '#fff' : '';
+  $('eyedrop').textContent = on ? '🎯 click a surface to match…' : '🎯 EYEDROPPER — match a surface';
+  renderer.domElement.style.cursor = on ? 'copy' : (canPaint() ? 'crosshair' : '');
+}
+function adoptSample(hex, m, r, g){
+  brushColor = hex; $('pcol').value = hex;
+  matState.m = m; matState.r = r; matState.a = hex; matState.g = g;
+  $('met').value = m;  $('metv').textContent = m.toFixed(2);
+  $('rou').value = r;  $('rouv').textContent = r.toFixed(2);
+  $('ambc').value = hex;
+  $('glo').value = g;  $('glov').textContent = g.toFixed(2);
+  pushMat();
+  toast('matched surface — colour + finish adopted');
+}
+const _c1 = new THREE.Color(), _c2 = new THREE.Color();
+function pickFromScene(ev){
+  const rect = renderer.domElement.getBoundingClientRect();
+  _ndc.x =  ((ev.clientX - rect.left) / rect.width)  * 2 - 1;
+  _ndc.y = -((ev.clientY - rect.top)  / rect.height) * 2 + 1;
+  rcaster.setFromCamera(_ndc, camera);
+  const hits = rcaster.intersectObjects(scene.children, true);
+  for (const h of hits){
+    const o = h.object;
+    if (!o.isMesh || o.visible === false) continue;         // skip sprites & hidden/un-rigged meshes
+    const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+    if (!mat) continue;
+    const ca = o.geometry && o.geometry.attributes.color;
+    if (mat.vertexColors && ca && h.face){                  // painted surface: average the hit face
+      _c1.setRGB(0,0,0);
+      for (const vi of [h.face.a, h.face.b, h.face.c]){ _c2.fromBufferAttribute(ca, vi); _c1.add(_c2); }
+      _c1.multiplyScalar(1/3);
+      if (mat.color) _c1.multiply(mat.color);
+    } else if (mat.color){ _c1.copy(mat.color); } else { _c1.setRGB(0.8,0.8,0.8); }
+    const metalness = ('metalness' in mat) ? mat.metalness : 0;
+    const roughness = ('roughness' in mat) ? mat.roughness : 0.9;
+    let glow = 0;
+    if (mat.emissive && (mat.emissive.r + mat.emissive.g + mat.emissive.b) > 0.02) glow = mat.emissiveIntensity || 0;
+    adoptSample('#' + _c1.getHexString(), metalness, roughness, glow);
+    return true;
+  }
+  return false;
+}
+$('eyedrop').addEventListener('click', () => setSampleMode(!sampleMode));
+
 // ============================================================
 //  SOLO TEST MODE — you seek 3 painted bots
 // ============================================================
@@ -1746,9 +1818,10 @@ function startSolo(){
     { id: 'b2', name: 'BOT·DOG', role: 'hider' },
     { id: 'b3', name: 'BOT·SNEAK', role: 'hider' },
   ];
+  const f = (LEVELS[levelSel].bound || BOUND_R) / BOUND_R;
   const seats = G.players.map((p, i) => {
     const sp = p.role === 'seeker' ? SEEKER_SPAWN : HIDER_SPAWNS[(i*2+1) % HIDER_SPAWNS.length];
-    return { id: p.id, name: p.name, role: p.role, x: sp[0], z: sp[1] };
+    return { id: p.id, name: p.name, role: p.role, x: sp[0]*f, z: sp[1]*f };
   });
   $('home').style.display = 'none';
   startMatch({ t: 'start', level: levelSel, seats });
