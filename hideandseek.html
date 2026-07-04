@@ -110,6 +110,12 @@
     <p class="sub">RIGMAN MULTIPLAYER · PAINT YOURSELF · BLEND IN</p>
     <label>YOUR NAME</label>
     <input type="text" id="nm" maxlength="14" placeholder="player name">
+    <label>LEVEL <span style="color:#556;letter-spacing:0">— for solo &amp; the round you host</span></label>
+    <div class="levels">
+      <div class="lvl sel" data-lvl="picnic"><div class="ico">🍉</div><div class="nm">PICNIC PANIC</div></div>
+      <div class="lvl" data-lvl="backyard"><div class="ico">🌲</div><div class="nm">BACKYARD WILDS</div></div>
+      <div class="lvl" data-lvl="breakfast"><div class="ico">🍳</div><div class="nm">BREAKFAST</div></div>
+    </div>
     <div class="split">
       <button class="bigbtn primary" id="hostbtn">HOST GAME</button>
     </div>
@@ -134,9 +140,9 @@
     <div class="code-big" id="codelbl">----</div>
     <label>LEVEL <span id="lvlnote" style="color:#556;letter-spacing:0"></span></label>
     <div class="levels">
-      <div class="lvl sel" id="lvl-picnic"><div class="ico">🍉</div><div class="nm">PICNIC PANIC</div></div>
-      <div class="lvl" id="lvl-backyard"><div class="ico">🌲</div><div class="nm">BACKYARD WILDS</div></div>
-      <div class="lvl" id="lvl-breakfast"><div class="ico">🍳</div><div class="nm">BREAKFAST</div></div>
+      <div class="lvl sel" data-lvl="picnic"><div class="ico">🍉</div><div class="nm">PICNIC PANIC</div></div>
+      <div class="lvl" data-lvl="backyard"><div class="ico">🌲</div><div class="nm">BACKYARD WILDS</div></div>
+      <div class="lvl" data-lvl="breakfast"><div class="ico">🍳</div><div class="nm">BREAKFAST</div></div>
     </div>
     <label>PLAYERS</label>
     <ul class="plist" id="plist"></ul>
@@ -213,7 +219,9 @@ const STEP_UP = 0.55;               // tallest ledge you can walk straight up
 const MAX_SLOPE = 55;               // degrees — anything steeper is a wall
 const BOUND_R = 19;                 // default playable radius (overridable per level via LEVELS.bound)
 let arenaR = BOUND_R;               // the current level's playable radius
-const FALL_Y = -8;                  // drop below this and you respawn at the origin
+let boundBox = null;               // {x,z} rectangular clamp (breakfast); null = circular clamp at arenaR
+const VOID_Y = -1000;              // groundAt sentinel: no floor under you → you fall
+const FALL_Y = -30;                // drop below this and you respawn at the origin
 const HIDE_TIME = 90;               // seconds to hide
 const HORN_LEN = 7.5;               // directional air-horn beam length
 const HORN_CD = 2.5, WHISTLE_CD = 4;
@@ -746,7 +754,7 @@ const LEVELS = {
     palette: ['#d94f3a','#f2e3c6','#e8b26a','#6b3f23','#ffd24a','#ff9fd0','#7ec850','#e8e2d2'] },
   backyard: { label: 'BACKYARD WILDS', sky: 0xa8d8ff, fog: [0xa8d8ff, 32, 95],
     palette: ['#3f7d2e','#6b4a2b','#8a8f98','#2e6b4f','#59a84a','#7a9b5c','#4d3a26'] },
-  breakfast: { label: 'BREAKFAST', sky: 0xffe9c9, fog: [0xffe9c9, 60, 180], bound: 44,
+  breakfast: { label: 'BREAKFAST', sky: 0xffe9c9, fog: [0xffe9c9, 55, 170], bound: 25,
     palette: ['#571c03','#8a5a2e','#c9a05a','#e8d8b0','#f0eef0','#a2432a','#3a241a','#f5b731'] },
 };
 
@@ -771,6 +779,7 @@ function buildLevel(name){
   colliders = []; levelName = name;
   const L = LEVELS[name];
   arenaR = L.bound || BOUND_R;
+  boundBox = null;                  // breakfast sets a larger box so you can walk off the table
   scene.background = new THREE.Color(L.sky);
   scene.fog = new THREE.Fog(L.fog[0], L.fog[1], L.fog[2]);
   // fit the sun's shadow frustum to the arena so shadows aren't clipped on big levels
@@ -952,8 +961,13 @@ function buildBreakfast(){
   t.updateMatrixWorld(true);
   box = new THREE.Box3().setFromObject(topMesh);
   const c = box.getCenter(new THREE.Vector3());
+  const tsize = box.getSize(new THREE.Vector3());
   t.position.x -= c.x; t.position.z -= c.z; t.position.y -= box.max.y;
   t.updateMatrixWorld(true);
+
+  // world edge sits ~1.5× the tabletop AREA out (√1.5 per side), so you can walk off the rim and fall
+  const k = Math.sqrt(1.5);
+  boundBox = { x: (tsize.x / 2) * k, z: (tsize.z / 2) * k };
 
   // shadows; turn standing items into colliders; keep only real walk surfaces in the raycast set
   t.traverse(o => {
@@ -1269,9 +1283,7 @@ function setStatus(id, s){ statusById[id] = s; }
 let levelSel = 'picnic';
 function setLevelSel(v, announce){
   levelSel = v;
-  $('lvl-picnic').classList.toggle('sel', v === 'picnic');
-  $('lvl-backyard').classList.toggle('sel', v === 'backyard');
-  $('lvl-breakfast').classList.toggle('sel', v === 'breakfast');
+  document.querySelectorAll('.lvl[data-lvl]').forEach(t => t.classList.toggle('sel', t.dataset.lvl === v));
   if (announce && isHost) bcast({ t: 'level', v });
 }
 
@@ -1617,9 +1629,14 @@ function updateLocal(dt){
 }
 
 function collide(c){
-  // world bounds only — scenery blocking/climbing is handled by the slope logic
-  const rr = Math.hypot(c.pos.x, c.pos.z);
-  if (rr > arenaR){ c.pos.x *= arenaR/rr; c.pos.z *= arenaR/rr; }
+  // scenery blocking/climbing is handled by the slope logic; this is just the world edge
+  if (boundBox){                                     // rectangular: bigger than the table → you can fall off
+    c.pos.x = Math.max(-boundBox.x, Math.min(boundBox.x, c.pos.x));
+    c.pos.z = Math.max(-boundBox.z, Math.min(boundBox.z, c.pos.z));
+  } else {
+    const rr = Math.hypot(c.pos.x, c.pos.z);
+    if (rr > arenaR){ c.pos.x *= arenaR/rr; c.pos.z *= arenaR/rr; }
+  }
 }
 
 // ---- climbable ground: raycast down onto the level meshes ----
@@ -1629,7 +1646,7 @@ function groundAt(x, z){
   _gorg.set(x, 40, z);
   _gcast.set(_gorg, _gdn);
   const hits = _gcast.intersectObjects(walkMeshes, false);
-  if (!hits.length) return { y: 0, slope: 0 };
+  if (!hits.length) return { y: VOID_Y, slope: 0 };   // nothing underfoot → fall
   const h = hits[0];
   let slope = 0;
   if (h.face){
@@ -1878,9 +1895,8 @@ $('againbtn').addEventListener('click', () => {
   G.players.forEach(p => p.role = (p.id === ns ? 'seeker' : 'hider'));
   const m = { t: 'tolobby', players: G.players }; bcast(m); applyMsg(m);
 });
-$('lvl-picnic').addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel('picnic', true); });
-$('lvl-backyard').addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel('backyard', true); });
-$('lvl-breakfast').addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel('breakfast', true); });
+document.querySelectorAll('.lvl[data-lvl]').forEach(t =>
+  t.addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel(t.dataset.lvl, true); }));
 document.querySelectorAll('.act[data-pose]').forEach(b =>
   b.addEventListener('click', () => lockPose(b.dataset.pose)));
 $('releasebtn').addEventListener('click', releasePose);
