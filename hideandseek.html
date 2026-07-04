@@ -187,9 +187,8 @@
     <div class="row"><span>ROUGHNESS</span><span id="rouv">0.90</span></div>
     <input type="range" id="rou" min="0" max="1" step="0.05" value="0.9">
     <div class="row"><span>AMBIENT COLOR</span><input type="color" id="ambc" value="#ffffff"></div>
-    <div class="row"><span>EMISSION</span><input type="color" id="emic" value="#000000"></div>
-    <div class="row"><span>GLOW STRENGTH</span><span id="glov">0.0</span></div>
-    <input type="range" id="glo" min="0" max="2" step="0.05" value="0">
+    <div class="row"><span>GLOW STRENGTH</span><span id="glov">0.15</span></div>
+    <input type="range" id="glo" min="0" max="2" step="0.05" value="0.15">
     <div class="row" style="margin-top:6px;color:#55627a">left-drag paints · right-drag orbits</div>
   </div>
 </div>
@@ -591,6 +590,9 @@ class Character {
       const m = src.clone();
       m.skinning = true; m.vertexColors = true;
       if (m.color) m.color.setRGB(1,1,1);
+      // default to a matte scenery-like response (GLTF defaults are fully metallic → paint reads wrong)
+      if ('metalness' in m){ m.metalness = 0; m.roughness = 0.9; }
+      if (m.emissive){ m.emissive.setRGB(1,1,1); m.emissiveIntensity = 0.15; }
       m.needsUpdate = true;
       this.mesh.material = m;
       const n = this.mesh.geometry.attributes.position.count;
@@ -693,12 +695,13 @@ class Character {
     for (let i = 0; i < arr.length; i += 3){ arr[i]=BASE_COL.r; arr[i+1]=BASE_COL.g; arr[i+2]=BASE_COL.b; }
     this.colorAttr.needsUpdate = true;
   }
-  setMat(o){          // aesthetics: reflectivity / roughness / ambient tint / emission
+  setMat(o){          // aesthetics: reflectivity / roughness / ambient tint / glow
     if (!this.mesh) return;
     const m = this.mesh.material;
     m.metalness = o.m; m.roughness = o.r;
     m.color.set(o.a);
-    m.emissive.set(o.e); m.emissiveIntensity = o.g;
+    m.emissive.set(o.a);                 // emission always shares the ambient/base color
+    m.emissiveIntensity = o.g;
     m.needsUpdate = true;
   }
   setFound(){
@@ -1121,7 +1124,7 @@ function applyMsg(m){
     }
     case 'mat': {
       const c = chars[m.id];
-      if (c && m.id !== myId) c.setMat({ m: m.m, r: m.r, a: m.a, e: m.e, g: m.g });
+      if (c && m.id !== myId) c.setMat({ m: m.m, r: m.r, a: m.a, g: m.g });
       break;
     }
     case 'whistle': {
@@ -1205,8 +1208,9 @@ function renderLobby(){
 }
 
 function hostStart(){
-  const seats = G.players.map((p, i) => {
-    const sp = p.role === 'seeker' ? SEEKER_SPAWN : HIDER_SPAWNS[(i-1) % HIDER_SPAWNS.length];
+  let hi = 0;   // hider spawn counter — after rotation the seeker can sit anywhere in the list
+  const seats = G.players.map(p => {
+    const sp = p.role === 'seeker' ? SEEKER_SPAWN : HIDER_SPAWNS[(hi++) % HIDER_SPAWNS.length];
     return { id: p.id, name: p.name, role: p.role, x: sp[0], z: sp[1] };
   });
   const m = { t: 'start', level: levelSel, seats };
@@ -1236,6 +1240,8 @@ function startMatch(m){
     controls.target.set(my.pos.x, my.pos.y + 1.1, my.pos.z);
     camera.position.set(my.pos.x + 4, 4, my.pos.z + 6);
   }
+  resetMatUI();                 // fresh material + sliders each round
+  showPaintbox(false);          // also restores left-drag orbit if a paint session carried over
   setupHudForPhase();
   refreshVisibility();
   refreshRoster();
@@ -1639,20 +1645,26 @@ $('prad').addEventListener('input', e => { brushR = parseFloat(e.target.value); 
 $('preset').addEventListener('click', () => { const my = me(); if (my){ my.resetColors(); act({ t: 'rescol' }); } });
 
 // ---- aesthetics: material controls for your own mesh, synced to everyone ----
-const matState = { m: 0, r: 0.9, a: '#ffffff', e: '#000000', g: 0 };
+const matState = { m: 0, r: 0.9, a: '#ffffff', g: 0.15 };   // matches the Character defaults
 let matTimer = null;
 function pushMat(){
   const my = me(); if (!my) return;
   my.setMat(matState);
   clearTimeout(matTimer);   // debounce the network send while sliders drag
   matTimer = setTimeout(() => act({ t: 'mat', m: matState.m, r: matState.r,
-    a: matState.a, e: matState.e, g: matState.g }), 150);
+    a: matState.a, g: matState.g }), 150);
+}
+function resetMatUI(){
+  matState.m = 0; matState.r = 0.9; matState.a = '#ffffff'; matState.g = 0.15;
+  $('met').value = 0;    $('metv').textContent = '0.00';
+  $('rou').value = 0.9;  $('rouv').textContent = '0.90';
+  $('ambc').value = '#ffffff';
+  $('glo').value = 0.15; $('glov').textContent = '0.15';
 }
 $('met').addEventListener('input', e => { matState.m = parseFloat(e.target.value); $('metv').textContent = matState.m.toFixed(2); pushMat(); });
 $('rou').addEventListener('input', e => { matState.r = parseFloat(e.target.value); $('rouv').textContent = matState.r.toFixed(2); pushMat(); });
 $('ambc').addEventListener('input', e => { matState.a = e.target.value; pushMat(); });
-$('emic').addEventListener('input', e => { matState.e = e.target.value; pushMat(); });
-$('glo').addEventListener('input', e => { matState.g = parseFloat(e.target.value); $('glov').textContent = matState.g.toFixed(1); pushMat(); });
+$('glo').addEventListener('input', e => { matState.g = parseFloat(e.target.value); $('glov').textContent = matState.g.toFixed(2); pushMat(); });
 
 // ============================================================
 //  SOLO TEST MODE — you seek 3 painted bots
