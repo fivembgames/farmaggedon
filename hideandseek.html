@@ -210,10 +210,10 @@
     <button class="act" data-pose="lie">LIE<span class="key">3</span></button>
     <button class="act" data-pose="turtle">TURTLE<span class="key">4</span></button>
     <button class="act" data-pose="x">X POSE<span class="key">5</span></button>
-    <button class="act" id="releasebtn" style="display:none">RELEASE<span class="key">R</span></button>
     <button class="act on" id="confirmbtn" style="display:none">CONFIRM HIDE<span class="key">⏎</span></button>
     <button class="act" id="whistlebtn" style="display:none">WHISTLE<span class="key">Q</span></button>
     <button class="act warn" id="hornbtn" style="display:none">AIR HORN<span class="key">E</span></button>
+    <button class="act" id="spectatebtn" style="display:none">👁 SPECTATE</button>
     <button class="act" id="skipbtn" style="display:none">START SEEKING →</button>
   </div>
   <div id="paintbox">
@@ -313,6 +313,8 @@ controls.minDistance = 2.2;
 controls.maxDistance = 16;
 controls.maxPolarAngle = Math.PI * 0.49;
 controls.target.set(0, 1.1, 0);
+controls.mouseButtons.LEFT = -1;                 // in-game: LEFT is paint, RIGHT tumbles (uniform)
+controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
 
 scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x3a4232, 0.75));
 scene.add(new THREE.AmbientLight(0xffffff, 0.38));            // soft fill so shading isn't harsh
@@ -1331,7 +1333,11 @@ function applyMsg(m){
         sndFound();
         const nm = (G.players.find(p => p.id === m.id) || {name:'?'}).name;
         toast('📣 ' + nm + ' WAS FOUND!');
-        if (m.id === myId){ toast('you were found — you can roam as a ghost'); exitPoseUI(); refreshVisibility(); }
+        if (m.id === myId){
+          toast('you were found — roam as a ghost, or SPECTATE the hunt');
+          spectating = false; specTarget = null; specCycle = 0;
+          exitPoseUI(); setupHudForPhase(); refreshVisibility(); updateSpecHint();
+        }
         refreshRoster();
       }
       break;
@@ -1400,6 +1406,7 @@ function startMatch(m){
   G.foundOrder = [];
   G.ended = false;
   sprintGauge = 1; sprintDrained = false;
+  spectating = false; specTarget = null; specCycle = 0;
   confirmedIds.clear();
   for (const s of m.seats){
     const c = new Character(s.id, s.name, s.role);
@@ -1419,7 +1426,8 @@ function startMatch(m){
     camera.position.set(my.pos.x + 4, 4, my.pos.z + 6);
   }
   resetMatUI();                 // fresh material + sliders each round
-  showPaintbox(false);          // also restores left-drag orbit if a paint session carried over
+  showPaintbox(false);
+  gameCameraButtons();          // uniform right-drag tumble (overrides gallery's mapping)
   setupHudForPhase();
   refreshVisibility();
   refreshRoster();
@@ -1486,9 +1494,36 @@ function refreshVisibility(){
     let vis = true, tag = true;
     if (G.phase === 'hide' && iAmSeeker && p.role === 'hider') vis = false;
     if (iAmSeeker && p.role === 'hider' && !c.found) tag = false;   // no name tags to give hiders away
-    if (p.id === myId) { vis = true; tag = false; }                  // never block your own view
+    if (p.id === myId) { vis = !spectating; tag = false; }           // hide your own ghost while spectating
+    if (spectating && p.id === specTarget) tag = false;              // don't tag whoever you're watching
     c.group.visible = vis;
     c.tag.visible = tag;
+  }
+}
+
+// ---- spectator mode for found hiders: cycle self(ghost) → seeker → other players ----
+function cycleSpectate(){
+  const my = me(); if (!my || !my.found) return;
+  const list = [myId];
+  for (const p of G.players) if (p.id !== myId && chars[p.id]) list.push(p.id);
+  specCycle = (specCycle + 1) % list.length;
+  const tid = list[specCycle];
+  spectating = (tid !== myId);
+  specTarget = spectating ? tid : null;
+  $('sprintbar').style.display = spectating ? 'none' : 'block';
+  refreshVisibility();
+  updateSpecHint();
+}
+function updateSpecHint(){
+  const my = me();
+  if (!my || !my.found || G.phase !== 'seek') return;
+  const el = $('centerhint');
+  el.style.display = 'block';
+  if (spectating && specTarget){
+    const nm = (G.players.find(p => p.id === specTarget) || {name:'?'}).name;
+    el.textContent = '👁 spectating ' + nm + ' — press SPECTATE to cycle';
+  } else {
+    el.textContent = '👁 roaming as a ghost — press SPECTATE to watch players';
   }
 }
 
@@ -1496,18 +1531,18 @@ function refreshVisibility(){
 //  HUD
 // ============================================================
 function setupHudForPhase(){
-  const role = myRole();
-  $('rolelbl').textContent = role === 'seeker' ? 'SEEKER' : 'HIDER';
-  $('rolelbl').className = 'r ' + role;
+  const role = myRole(), meC = me(), found = !!(meC && meC.found);
+  $('rolelbl').textContent = found ? 'SPECTATOR' : (role === 'seeker' ? 'SEEKER' : 'HIDER');
+  $('rolelbl').className = 'r ' + (found ? 'hider' : role);
   const poseBtns = document.querySelectorAll('.act[data-pose]');
   const isHider = role === 'hider';
-  poseBtns.forEach(b => b.style.display = isHider ? '' : 'none');
-  $('whistlebtn').style.display = isHider && G.phase === 'seek' ? '' : 'none';
+  poseBtns.forEach(b => b.style.display = (isHider && !found) ? '' : 'none');
+  $('whistlebtn').style.display = isHider && !found && G.phase === 'seek' ? '' : 'none';
   $('hornbtn').style.display = role === 'seeker' && G.phase === 'seek' ? '' : 'none';
+  $('spectatebtn').style.display = found && G.phase === 'seek' ? '' : 'none';
   $('skipbtn').style.display = solo && G.phase === 'hide' ? '' : 'none';
   $('confirmbtn').style.display = 'none';
-  $('releasebtn').style.display = 'none';
-  $('sprintbar').style.display = (G.phase === 'hide' || G.phase === 'seek') ? 'block' : 'none';
+  $('sprintbar').style.display = (G.phase === 'hide' || G.phase === 'seek') && !spectating ? 'block' : 'none';
   if (G.phase === 'hide'){
     $('phaselbl').textContent = 'HIDE PHASE';
     $('rolehint').textContent = role === 'seeker'
@@ -1522,12 +1557,9 @@ function setupHudForPhase(){
     if (role === 'seeker') showPaintbox(true);   // seeker keeps the paint panel during the hunt
     refreshSeekerWait();
   }
-  // hider carried a locked pose across the phase change — keep its controls up
-  const my = me();
-  if (role === 'hider' && my && my.posed && !my.found){
-    $('releasebtn').style.display = '';
-    showPaintbox(true);
-  }
+  // hider carried a locked pose across the phase change — keep its paint panel up
+  if (role === 'hider' && meC && meC.posed && !found) showPaintbox(true);
+  if (found && G.phase === 'seek') updateSpecHint();
   refreshRoster();
 }
 
@@ -1634,7 +1666,10 @@ function updateDust(dt){
 // ============================================================
 const keys = {};
 addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT') return;
+  const el = e.target;
+  if (el && el.tagName === 'INPUT' && el.type === 'text') return;   // let the name / code fields type
+  // paint sliders, colour pickers & buttons must not keep keyboard focus and swallow movement keys
+  if (el && el.blur && (el.tagName === 'INPUT' || el.tagName === 'BUTTON')) el.blur();
   keys[e.code] = true;
   if (G.phase !== 'hide' && G.phase !== 'seek') return;
   if (e.code === 'Space') e.preventDefault();
@@ -1643,7 +1678,6 @@ addEventListener('keydown', e => {
   if (role === 'hider' && !my.found){
     const pi = ['Digit1','Digit2','Digit3','Digit4','Digit5'].indexOf(e.code);
     if (pi >= 0) lockPose(HIDE_POSES[pi]);
-    if (e.code === 'KeyR') releasePose();
     if (e.code === 'Enter') confirmHide();
     if (e.code === 'KeyQ') doWhistle();
   }
@@ -1689,7 +1723,6 @@ function lockPose(pose){
   act({ t: 'pose', pose, x: my.pos.x, z: my.pos.z, yaw: my.yaw });
   document.querySelectorAll('.act[data-pose]').forEach(b => b.classList.toggle('on', b.dataset.pose === pose));
   $('confirmbtn').style.display = (G.phase === 'hide' && !my.confirmed) ? '' : 'none';
-  $('releasebtn').style.display = '';
   showPaintbox(true);
 }
 function releasePose(){
@@ -1702,7 +1735,6 @@ function releasePose(){
 function exitPoseUI(){
   document.querySelectorAll('.act[data-pose]').forEach(b => b.classList.remove('on'));
   $('confirmbtn').style.display = 'none';
-  $('releasebtn').style.display = 'none';
   if (!(myRole() === 'seeker' && G.phase === 'hide')) showPaintbox(false);
 }
 function confirmHide(){
@@ -1710,26 +1742,32 @@ function confirmHide(){
   my.confirmed = true;
   act({ t: 'confirm' });
   $('confirmbtn').style.display = 'none';
-  toast('hidden! (R to release and move again)');
+  toast('hidden! (move to break free & re-hide)');
 }
 
 // camera-relative movement
 const mvDir = new THREE.Vector3();
 let sprintGauge = 1, sprintDrained = false, burstT = 0, wasSprinting = false;
+let spectating = false, specTarget = null, specCycle = 0;
 function updateSprintBar(){
   const f = $('sprintfill'); if (!f) return;
   f.style.width = (sprintGauge*100).toFixed(0) + '%';
   f.style.background = sprintDrained ? '#e05a5a' : (sprintGauge > 0.99 ? '#7fffaa' : '#5fa0ff');
 }
+const moveKeyDown = () => keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
 function updateLocal(dt){
   const my = me(); if (!my) return;
-  if (my.pos.y < fallFloor){                   // fell off the world → respawn at the origin
-    const sb = surfaceBelow(0, 0, 200);
-    my.pos.set(0, sb ? sb.y : 0, 0);
-    my.vy = 0; my.airborne = false;
-    toast('you fell — respawned at the centre');
+  const camChar = (spectating && chars[specTarget]) ? chars[specTarget] : my;   // who the camera tracks
+  if (!spectating){
+    if (my.posed && moveKeyDown()) releasePose();          // start moving to break out of a pose
+    if (my.pos.y < fallFloor){                             // fell off the world → respawn at the origin
+      const sb = surfaceBelow(0, 0, 200);
+      my.pos.set(0, sb ? sb.y : 0, 0);
+      my.vy = 0; my.airborne = false;
+      toast('you fell — respawned at the centre');
+    }
   }
-  if (canMove()){
+  if (!spectating && canMove()){
     mvDir.set(0,0,0);
     if (keys['KeyW'] || keys['ArrowUp']) mvDir.z -= 1;
     if (keys['KeyS'] || keys['ArrowDown']) mvDir.z += 1;
@@ -1789,8 +1827,8 @@ function updateLocal(dt){
     my.setAnim(moving ? 'walk' : 'idle');
   }
   updateSprintBar();
-  // follow camera: shift camera by the target's motion
-  const tx = my.pos.x, ty2 = my.pos.y + 1.1, tz = my.pos.z;
+  // follow camera: shift camera by the tracked character's motion
+  const tx = camChar.pos.x, ty2 = camChar.pos.y + 1.1, tz = camChar.pos.z;
   const dx = tx - controls.target.x, dy = ty2 - controls.target.y, dz = tz - controls.target.z;
   controls.target.set(tx, ty2, tz);
   camera.position.x += dx; camera.position.y += dy; camera.position.z += dz;
@@ -2019,15 +2057,16 @@ function canPaint(){
   if (myRole() === 'seeker') return G.phase === 'hide' || G.phase === 'seek';   // seeker repaints anytime
   return !!my.posed;
 }
+// in-game the camera always tumbles with RIGHT-drag (uniform for seeker & hider); LEFT is paint
+function gameCameraButtons(){
+  controls.mouseButtons.LEFT = -1;
+  controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
+}
 function showPaintbox(on){
   $('paintbox').style.display = on ? 'block' : 'none';
   if (on){
-    controls.mouseButtons.LEFT = -1;                       // left = paint
-    controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;      // right = orbit
     renderer.domElement.style.cursor = 'crosshair';
   } else {
-    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
-    controls.mouseButtons.RIGHT = -1;
     renderer.domElement.style.cursor = '';
     painting = false;
     if (typeof sampleMode !== 'undefined' && sampleMode) setSampleMode(false);
@@ -2292,10 +2331,10 @@ document.querySelectorAll('.lvl[data-lvl]').forEach(t =>
   t.addEventListener('click', () => { if (isHost || G.phase === 'home') setLevelSel(t.dataset.lvl, true); }));
 document.querySelectorAll('.act[data-pose]').forEach(b =>
   b.addEventListener('click', () => lockPose(b.dataset.pose)));
-$('releasebtn').addEventListener('click', releasePose);
 $('confirmbtn').addEventListener('click', confirmHide);
 $('whistlebtn').addEventListener('click', doWhistle);
 $('hornbtn').addEventListener('click', doHorn);
+$('spectatebtn').addEventListener('click', cycleSpectate);
 $('skipbtn').addEventListener('click', () => { if (solo && G.phase === 'hide') hostStartSeek(); });
 
 // ============================================================
